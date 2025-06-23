@@ -4,7 +4,7 @@ import numpy as np
 # from flcore.clients.clientavg import clientAVG
 from flcore.clients.clientas import clientAS
 from flcore.servers.serverbase import Server
-
+import sys
 
 class FedAS(Server):
     def __init__(self, args, times):
@@ -56,6 +56,7 @@ class FedAS(Server):
 
     def train(self):
         for i in range(self.global_rounds+1):
+            sys.stdout.flush()  # 强制刷新标准输出缓冲区
             s_t = time.time()
             self.selected_clients = self.select_clients()
             self.alled_clients = self.all_clients()

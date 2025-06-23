@@ -109,7 +109,7 @@ def run(args):
                 args.model = DNN(60, 20, num_classes=args.num_classes).to(args.device)
         
         elif model_str == "ResNet18":
-            args.model = torchvision.models.resnet18(pretrained=False, num_classes=args.num_classes).to(args.device)
+            args.model = resnet18(num_classes=args.num_classes).to(args.device)#torchvision.models.resnet18(pretrained=False, num_classes=args.num_classes).to(args.device)
             
             # args.model = torchvision.models.resnet18(pretrained=True).to(args.device)
             # feature_dim = list(args.model.fc.parameters())[0].shape[1]
@@ -360,7 +360,14 @@ def run(args):
             args.model.fc = nn.Identity()
             args.model = BaseHeadSplit(args.model, args.head)
             server = FedAS(args, i)
-            
+
+        elif args.algorithm == 'Mine':
+            args.headG = copy.deepcopy(args.model.fc)
+            args.headL = copy.deepcopy(args.model.fc)
+            args.model.fc = nn.Identity()
+            args.decoder = Decoder(args.feature_dim)
+            args.model = BaseMineSplit(args.model, args.headG, args.headL, args.decoder)
+            # server = FedFDPA(args, i)
         else:
             raise NotImplementedError
 

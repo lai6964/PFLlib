@@ -19,6 +19,44 @@ class BaseHeadSplit(nn.Module):
 
         return out
 
+
+class BaseMineSplit(nn.Module):
+    def __init__(self, base, headG, headL, decoder):
+        super(BaseMineSplit, self).__init__()
+
+        self.base = base
+        self.headG = headG
+        self.headL = headL
+        self.decoder = decoder
+
+    def forward(self, x):
+        out = self.base(x)
+        outG = self.headG(out)
+        outL = self.headL(out)
+        outP = self.decoder(out)
+
+        return out, outG, outL, outP
+
+class Decoder(nn.Module):
+    def __init__(self, embedding_dim: int=512, image_channels: int = 3, image_size: int = 32):
+        super(Decoder, self).__init__()
+        self.fc = nn.Linear(embedding_dim, 256*4*4)
+        self.deconv1 = nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1)
+        self.deconv2 = nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1)
+        self.deconv3 = nn.ConvTranspose2d(64, image_channels, kernel_size=4, stride=2, padding=1)
+        self.bn1 = nn.BatchNorm2d(128)
+        self.bn2 = nn.BatchNorm2d(64)
+        self.tanh = nn.Tanh()
+        self.learnable_vector = nn.Parameter(torch.randn(embedding_dim))
+
+    def forward(self, embedding: torch.Tensor) -> torch.Tensor:
+        x = self.fc(embedding+self.learnable_vector)
+        x = x.view(x.size(0), 256, 4, 4)  # 调整为适合转置卷积的形状
+        x = F.relu(self.bn1(self.deconv1(x)))
+        x = F.relu(self.bn2(self.deconv2(x)))
+        x = self.tanh(self.deconv3(x))  # 使用tanh激活函数将输出限制在[-1, 1]
+        return x
+
 ###########################################################
 
 # https://github.com/jindongwang/Deep-learning-activity-recognition/blob/master/pytorch/network.py
