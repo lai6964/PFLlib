@@ -48,6 +48,7 @@ from flcore.servers.servercac import FedCAC
 from flcore.servers.serverda import PFL_DA
 from flcore.servers.serverlc import FedLC
 from flcore.servers.serveras import FedAS
+from flcore.servers.serverdfpa import FedDFPA
 
 from flcore.trainmodel.models import *
 
@@ -66,6 +67,15 @@ logger.setLevel(logging.ERROR)
 warnings.simplefilter("ignore")
 torch.manual_seed(0)
 
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
 
 def run(args):
 
@@ -105,6 +115,7 @@ def run(args):
                 args.model = DNN(1*28*28, 100, num_classes=args.num_classes).to(args.device)
             elif "Cifar10" in args.dataset:
                 args.model = DNN(3*32*32, 100, num_classes=args.num_classes).to(args.device)
+                print("model_str:",model_str)
             else:
                 args.model = DNN(60, 20, num_classes=args.num_classes).to(args.device)
         
@@ -361,15 +372,15 @@ def run(args):
             args.model = BaseHeadSplit(args.model, args.head)
             server = FedAS(args, i)
 
-        elif args.algorithm == 'Mine':
-            args.headG = copy.deepcopy(args.model.fc)
+        elif args.algorithm == 'FedDFPA':
+            args.head = copy.deepcopy(args.model.fc)
             args.headL = copy.deepcopy(args.model.fc)
             args.model.fc = nn.Identity()
-            args.decoder = Decoder(args.feature_dim)
-            args.model = BaseMineSplit(args.model, args.headG, args.headL, args.decoder)
-            # server = FedFDPA(args, i)
+            args.decoder = Decoder(args.feature_dim, device=args.device)
+            args.model = BaseMineSplit(args.model, args.head, args.headL, args.decoder).to(args.device)
+            server = FedDFPA(args, i)
         else:
-            raise NotImplementedError
+            raise NotImplementedError("{}".format(args.algorithm))
 
         server.train()
 
@@ -396,18 +407,18 @@ if __name__ == "__main__":
     parser.add_argument('-dev', "--device", type=str, default="cuda",
                         choices=["cpu", "cuda"])
     parser.add_argument('-did', "--device_id", type=str, default="0")
-    parser.add_argument('-data', "--dataset", type=str, default="MNIST")
-    parser.add_argument('-ncl', "--num_classes", type=int, default=10)
+    parser.add_argument('-data', "--dataset", type=str, default="Cifar100")
+    parser.add_argument('-ncl', "--num_classes", type=int, default=100)
     parser.add_argument('-m', "--model", type=str, default="CNN")
     parser.add_argument('-lbs', "--batch_size", type=int, default=10)
     parser.add_argument('-lr', "--local_learning_rate", type=float, default=0.005,
                         help="Local learning rate")
     parser.add_argument('-ld', "--learning_rate_decay", type=bool, default=False)
     parser.add_argument('-ldg', "--learning_rate_decay_gamma", type=float, default=0.99)
-    parser.add_argument('-gr', "--global_rounds", type=int, default=2000)
+    parser.add_argument('-gr', "--global_rounds", type=int, default=100)
     parser.add_argument('-tc', "--top_cnt", type=int, default=100, 
                         help="For auto_break")
-    parser.add_argument('-ls', "--local_epochs", type=int, default=1, 
+    parser.add_argument('-ls', "--local_epochs", type=int, default=5,
                         help="Multiple update steps in one local epoch.")
     parser.add_argument('-algo', "--algorithm", type=str, default="FedAvg")
     parser.add_argument('-jr', "--join_ratio", type=float, default=1.0,
@@ -443,7 +454,7 @@ if __name__ == "__main__":
                         help="The rate for slow clients when sending global model")
     parser.add_argument('-ts', "--time_select", type=bool, default=False,
                         help="Whether to group and select clients at each round according to time cost")
-    parser.add_argument('-tth', "--time_threthold", type=float, default=10000,
+    parser.add_argument('-tth', "--time_threthold", type=float, default=1000000,
                         help="The threthold for droping slow clients")
     # pFedMe / PerAvg / FedProx / FedAMP / FedPHP / GPFL / FedCAC
     parser.add_argument('-bt', "--beta", type=float, default=0.0)
@@ -495,6 +506,9 @@ if __name__ == "__main__":
     # FedDBE
     parser.add_argument('-mo', "--momentum", type=float, default=0.1)
     parser.add_argument('-klw', "--kl_weight", type=float, default=0.0)
+    parser.add_argument("--using_reconstructloss", type=str2bool, default=False)
+    parser.add_argument("--using_tripletloss", type=str2bool, default=False)
+    parser.add_argument("--using_specialloss", type=str2bool, default=False)
 
 
     args = parser.parse_args()
@@ -518,8 +532,8 @@ if __name__ == "__main__":
     #     on_trace_ready=torch.profiler.tensorboard_trace_handler('./log')
     #     ) as prof:
     # with torch.autograd.profiler.profile(profile_memory=True) as prof:
+    print(args.algorithm, args.using_reconstructloss, args.using_tripletloss, args.using_specialloss)
     run(args)
-
     
     # print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=20))
     # print(f"\nTotal time cost: {round(time.time()-total_start, 2)}s.")

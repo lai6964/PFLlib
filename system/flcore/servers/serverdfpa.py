@@ -1,3 +1,4 @@
+import copy
 import time
 import numpy as np
 from flcore.clients.clientdfpa import clientDFPA
@@ -5,9 +6,10 @@ from flcore.servers.serverbase import Server
 from threading import Thread
 from collections import defaultdict
 import sys
+import torch
 
 
-class FedProto(Server):
+class FedDFPA(Server):
     def __init__(self, args, times):
         super().__init__(args, times)
 
@@ -22,6 +24,8 @@ class FedProto(Server):
         self.Budget = []
         self.num_classes = args.num_classes
         self.global_protos = [None for _ in range(args.num_classes)]
+        self.classifier = copy.deepcopy(args.model.head)
+        self.virtual_representation_perclass = 200
 
     def train(self):
         for i in range(self.global_rounds + 1):
@@ -42,9 +46,17 @@ class FedProto(Server):
             # [t.start() for t in threads]
             # [t.join() for t in threads]
 
+
+            # self.receive_models()
+            # self.aggregate_parameters()
+
             self.receive_protos()
             self.global_protos = proto_aggregation(self.uploaded_protos)
             self.send_protos()
+
+            self.train_classifier_G()
+            self.send_classifer_models()
+
 
             self.Budget.append(time.time() - s_t)
             print('-' * 50, self.Budget[-1])
@@ -103,6 +115,71 @@ class FedProto(Server):
         # self.print_(test_acc, train_acc, train_loss)
         print("Std Test Accuracy: {:.4f}".format(np.std(accs)))
 
+    def generate_virtual_representation(self):
+        inv_protos, spe_protos = {}, {}
+        for client in self.selected_clients:
+            protos = client.local_protos
+            for key, proto in protos.items():
+                if key in inv_protos.keys():
+                    inv_protos[key].append(proto)
+                else:
+                    inv_protos[key] = [proto]
+
+            protos = client.special_protos
+            for key, proto in protos.items():
+                if key in spe_protos.keys():
+                    spe_protos[key].extend(proto)
+                else:
+                    spe_protos[key] = proto
+
+        data, targets = [], []
+        for key in spe_protos.keys():
+            inv_proto = inv_protos[key]
+            spe_proto = spe_protos[key]
+            d = len(inv_proto)
+            for i in range(self.virtual_representation_perclass):
+                inv_lambda = get_random_lambda(len(inv_proto))
+                spe_lambda = get_random_lambda(len(spe_proto))
+
+                tmp_inv = sum(w*t.cpu() for w,t in zip(inv_lambda, inv_proto))
+                tmp_spe = sum(w*t.cpu() for w,t in zip(spe_lambda, spe_proto))
+
+                tmpdata = tmp_inv+tmp_spe
+                data.append(tmpdata[:d//2])
+                targets.append(key)
+        data = torch.cat(data)
+        targets = torch.Tensor(targets)
+        # print(data.shape, targets.shape)
+        dataset = RepresentationDataset(data, targets)
+        dataloader = torch.utils.data.DataLoader(dataset, batch_size=32, shuffle=True)
+        return dataloader
+
+    def train_classifier_G(self):
+        dataloader = self.generate_virtual_representation()
+        criterion = torch.nn.CrossEntropyLoss()
+        optimizer = torch.optim.SGD(self.classifier.parameters(), lr=self.learning_rate)
+        # optimizer = optim.Adam(self.classifier.parameters(), lr=self.args.local_lr, weight_decay=1e-5)
+        self.classifier.to(self.device)
+        self.classifier.train()
+        for x, y in dataloader:
+            x, y = x.to(self.device), y.to(self.device)
+            logits = self.classifier(x)
+            loss = criterion(logits, y.long())
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+    def send_classifer_models(self):
+        assert (len(self.clients) > 0)
+
+        for client in self.clients:
+            start_time = time.time()
+
+            client.set_classifier_parameters(self.classifier)
+
+            client.send_time_cost['num_rounds'] += 1
+            client.send_time_cost['total_cost'] += 2 * (time.time() - start_time)
+
 
 def proto_aggregation(local_protos_list):
     agg_protos = defaultdict(list)
@@ -120,3 +197,20 @@ def proto_aggregation(local_protos_list):
             agg_protos[label] = proto_list[0].data
 
     return agg_protos
+
+
+def get_random_lambda(num):
+    alpha = np.ones(num)  # Dirichlet 分布的参数，所有元素为 1
+    random_numbers = np.random.dirichlet(alpha)
+    return random_numbers
+
+class RepresentationDataset(torch.utils.data.Dataset):
+    def __init__(self, data, targets):
+        self.data = data
+        self.targets = targets
+
+    def __getitem__(self, idx):
+        return self.data[idx], self.targets[idx]
+
+    def __len__(self):
+        return len(self.targets)

@@ -21,24 +21,24 @@ class BaseHeadSplit(nn.Module):
 
 
 class BaseMineSplit(nn.Module):
-    def __init__(self, base, headG, headL, decoder):
+    def __init__(self, base, head, headL, decoder):
         super(BaseMineSplit, self).__init__()
 
         self.base = base
-        self.headG = headG
+        self.head = head
         self.headL = headL
         self.decoder = decoder
 
     def forward(self, x):
         out = self.base(x)
-        outG = self.headG(out)
+        outG = self.head(out)
         outL = self.headL(out)
         outP = self.decoder(out)
 
         return out, outG, outL, outP
 
 class Decoder(nn.Module):
-    def __init__(self, embedding_dim: int=512, image_channels: int = 3, image_size: int = 32):
+    def __init__(self, embedding_dim: int=512, image_channels: int = 3, image_size: int = 32, device = 'cpu'):
         super(Decoder, self).__init__()
         self.fc = nn.Linear(embedding_dim, 256*4*4)
         self.deconv1 = nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1)
@@ -47,7 +47,7 @@ class Decoder(nn.Module):
         self.bn1 = nn.BatchNorm2d(128)
         self.bn2 = nn.BatchNorm2d(64)
         self.tanh = nn.Tanh()
-        self.learnable_vector = nn.Parameter(torch.randn(embedding_dim))
+        self.learnable_vector = torch.randn(embedding_dim).to(device)
 
     def forward(self, embedding: torch.Tensor) -> torch.Tensor:
         x = self.fc(embedding+self.learnable_vector)
