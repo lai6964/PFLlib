@@ -4,7 +4,7 @@ import numpy as np
 from flcore.clients.clientperavg import clientPerAvg
 from flcore.servers.serverbase import Server
 from threading import Thread
-
+import sys
 
 class PerAvg(Server):
     def __init__(self, args, times):
@@ -20,6 +20,7 @@ class PerAvg(Server):
 
     def train(self):
         for i in range(self.global_rounds+1):
+            sys.stdout.flush()  # 强制刷新标准输出缓冲区
             s_t = time.time()
             self.selected_clients = self.select_clients()
             # send all parameter for clients

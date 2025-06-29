@@ -270,49 +270,51 @@ class clientDFPA(Client):
 
         return losses, train_num
 
-    # def test_metrics(self, model=None):
-    #     testloader = self.load_test_data()
-    #     if model == None:
-    #         model = self.model
-    #     model.eval()
-    #
-    #     test_acc = 0
-    #     test_num = 0
-    #     y_prob = []
-    #     y_true = []
-    #
-    #     with torch.no_grad():
-    #         for x, y in testloader:
-    #             if type(x) == type([]):
-    #                 x[0] = x[0].to(self.device)
-    #             else:
-    #                 x = x.to(self.device)
-    #             y = y.to(self.device)
-    #             rep = self.model.base(x)
-    #             d = rep.size(1)
-    #             embedding_inv = torch.cat((rep[:, :d // 2], torch.zeros_like(rep[:, d // 2:])), dim=1)
-    #             out_g = self.model.head(embedding_inv)
-    #             out_p = self.model.headL(rep.detach())
-    #             output = out_g.detach() #+ out_p
-    #
-    #             test_acc += (torch.sum(torch.argmax(output, dim=1) == y)).item()
-    #             test_num += y.shape[0]
-    #
-    #             y_prob.append(torch.nn.functional.softmax(output).detach().cpu().numpy())
-    #             nc = self.num_classes
-    #             if self.num_classes == 2:
-    #                 nc += 1
-    #             lb = label_binarize(y.detach().cpu().numpy(), classes=np.arange(nc))
-    #             if self.num_classes == 2:
-    #                 lb = lb[:, :2]
-    #             y_true.append(lb)
-    #
-    #     y_prob = np.concatenate(y_prob, axis=0)
-    #     y_true = np.concatenate(y_true, axis=0)
-    #
-    #     auc = metrics.roc_auc_score(y_true, y_prob, average='micro')
-    #
-    #     return test_acc, test_num, auc
+    def test_metrics2(self, model=None):
+        testloader = self.load_test_data()
+        if model == None:
+            model = self.model
+        model.eval()
+
+        test_acc = 0
+        test_acc2 = 0
+        test_num = 0
+        y_prob = []
+        y_true = []
+
+        with torch.no_grad():
+            for x, y in testloader:
+                if type(x) == type([]):
+                    x[0] = x[0].to(self.device)
+                else:
+                    x = x.to(self.device)
+                y = y.to(self.device)
+                rep = self.model.base(x)
+                d = rep.size(1)
+                embedding_inv = torch.cat((rep[:, :d // 2], torch.zeros_like(rep[:, d // 2:])), dim=1)
+                out_g = self.model.head(embedding_inv)
+                out_p = self.model.headL(rep.detach()-embedding_inv)
+                output = out_g.detach() + out_p.detach()
+
+                test_acc += (torch.sum(torch.argmax(out_g, dim=1) == y)).item()
+                test_acc2 += (torch.sum(torch.argmax(output, dim=1) == y)).item()
+                test_num += y.shape[0]
+
+                y_prob.append(torch.nn.functional.softmax(output).detach().cpu().numpy())
+                nc = self.num_classes
+                if self.num_classes == 2:
+                    nc += 1
+                lb = label_binarize(y.detach().cpu().numpy(), classes=np.arange(nc))
+                if self.num_classes == 2:
+                    lb = lb[:, :2]
+                y_true.append(lb)
+
+        y_prob = np.concatenate(y_prob, axis=0)
+        y_true = np.concatenate(y_true, axis=0)
+
+        auc = metrics.roc_auc_score(y_true, y_prob, average='micro')
+
+        return test_acc, test_num, auc, test_acc2
     #
     # def train_metrics(self):
     #     trainloader = self.load_train_data()

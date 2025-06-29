@@ -8,6 +8,7 @@ from flcore.clients.clientpac import clientPAC
 from flcore.servers.serverbase import Server
 from threading import Thread
 from collections import defaultdict
+import sys
 
 
 class FedPAC(Server):
@@ -33,6 +34,7 @@ class FedPAC(Server):
 
     def train(self):
         for i in range(self.global_rounds+1):
+            sys.stdout.flush()  # 强制刷新标准输出缓冲区
             s_t = time.time()
             self.selected_clients = self.select_clients()
             self.send_models()
@@ -153,8 +155,8 @@ class FedPAC(Server):
         head_weights = solve_quadratic(len(self.uploaded_ids), self.Vars, self.Hs)
 
         for idx, cid in enumerate(self.uploaded_ids):
-            print('(Client {}) Weights of Classifier Head'.format(cid))
-            print(head_weights[idx],'\n')
+            # print('(Client {}) Weights of Classifier Head'.format(cid))
+            # print(head_weights[idx],'\n')
 
             if head_weights[idx] is not None:
                 new_head = self.add_heads(head_weights[idx])

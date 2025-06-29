@@ -5,7 +5,7 @@ from flcore.clients.clientcp import *
 from flcore.servers.serverbase import Server
 from utils.data_utils import read_client_data
 from threading import Thread
-
+import sys
 
 class FedCP(Server):
     def __init__(self, args, times):
@@ -74,6 +74,7 @@ class FedCP(Server):
 
     def train(self):
         for i in range(self.global_rounds+1):
+            sys.stdout.flush()  # 强制刷新标准输出缓冲区
             s_t = time.time()
             self.selected_clients = self.select_clients()
 

@@ -2,7 +2,7 @@ import time
 from flcore.clients.clientrod import clientROD
 from flcore.servers.serverbase import Server
 from threading import Thread
-
+import sys
 
 class FedROD(Server):
     def __init__(self, args, times):
@@ -21,6 +21,7 @@ class FedROD(Server):
 
     def train(self):
         for i in range(self.global_rounds+1):
+            sys.stdout.flush()  # 强制刷新标准输出缓冲区
             s_t = time.time()
             self.selected_clients = self.select_clients()
             self.send_models()

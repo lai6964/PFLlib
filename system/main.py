@@ -506,9 +506,9 @@ if __name__ == "__main__":
     # FedDBE
     parser.add_argument('-mo', "--momentum", type=float, default=0.1)
     parser.add_argument('-klw', "--kl_weight", type=float, default=0.0)
-    parser.add_argument("--using_reconstructloss", type=str2bool, default=False)
-    parser.add_argument("--using_tripletloss", type=str2bool, default=False)
-    parser.add_argument("--using_specialloss", type=str2bool, default=False)
+    parser.add_argument("--using_reconstructloss", type=str2bool, default=True)
+    parser.add_argument("--using_tripletloss", type=str2bool, default=True)
+    parser.add_argument("--using_specialloss", type=str2bool, default=True)
 
 
     args = parser.parse_args()

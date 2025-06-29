@@ -26,6 +26,8 @@ class FedDFPA(Server):
         self.global_protos = [None for _ in range(args.num_classes)]
         self.classifier = copy.deepcopy(args.model.head)
         self.virtual_representation_perclass = 200
+        self.rs_test_acc2=[]
+        self.rs_test_acc3=[]
 
     def train(self):
         for i in range(self.global_rounds + 1):
@@ -68,6 +70,8 @@ class FedDFPA(Server):
         # self.print_(max(self.rs_test_acc), max(
         #     self.rs_train_acc), min(self.rs_train_loss))
         print(max(self.rs_test_acc))
+        print(max(self.rs_test_acc2))
+        print(max(self.rs_test_acc3))
         print(sum(self.Budget[1:]) / len(self.Budget[1:]))
 
         self.save_results()
@@ -92,16 +96,42 @@ class FedDFPA(Server):
             self.uploaded_ids.append(client.id)
             self.uploaded_protos.append(client.protos)
 
+    def test_metrics(self):
+        if self.eval_new_clients and self.num_new_clients > 0:
+            self.fine_tuning_new_clients()
+            return self.test_metrics_new_clients()
+
+        num_samples = []
+        tot_correct = []
+        tot_correct2, tot_correct3 = [],[]
+        tot_auc = []
+        for c in self.clients:
+            ct, ns, auc = c.test_metrics()
+            ct2, ns2, auc2, ct3 = c.test_metrics2()
+            tot_correct.append(ct * 1.0)
+            tot_correct2.append(ct2 * 1.0)
+            tot_correct3.append(ct3 * 1.0)
+            tot_auc.append(auc * ns)
+            num_samples.append(ns)
+
+        ids = [c.id for c in self.clients]
+
+        return ids, num_samples, tot_correct, tot_auc, tot_correct2, tot_correct3
+
     def evaluate(self, acc=None, loss=None):
         stats = self.test_metrics()
         stats_train = self.train_metrics()
 
-        test_acc = sum(stats[2]) * 1.0 / sum(stats[1])
+        test_acc = sum(stats[2])*1.0 / sum(stats[1])
+        test_acc2 = sum(stats[4])*1.0 / sum(stats[1])
+        test_acc3 = sum(stats[5])*1.0 / sum(stats[1])
         train_loss = sum(stats_train[2]) * 1.0 / sum(stats_train[1])
         accs = [a / n for a, n in zip(stats[2], stats[1])]
 
         if acc == None:
             self.rs_test_acc.append(test_acc)
+            self.rs_test_acc2.append(test_acc2)
+            self.rs_test_acc3.append(test_acc3)
         else:
             acc.append(test_acc)
 
@@ -112,6 +142,8 @@ class FedDFPA(Server):
 
         print("Averaged Train Loss: {:.4f}".format(train_loss))
         print("Averaged Test Accuracy: {:.4f}".format(test_acc))
+        print("Averaged Test Accuracy2: {:.4f}".format(test_acc2))
+        print("Averaged Test Accuracy3: {:.4f}".format(test_acc3))
         # self.print_(test_acc, train_acc, train_loss)
         print("Std Test Accuracy: {:.4f}".format(np.std(accs)))
 

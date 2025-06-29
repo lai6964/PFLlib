@@ -87,7 +87,7 @@ class FedAS(Server):
             # assert 1==0
 
 
-            self.print_fim_histories()
+            # self.print_fim_histories()
 
 
 
