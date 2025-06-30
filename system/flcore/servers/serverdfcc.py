@@ -1,7 +1,7 @@
 import copy
 import time
 import numpy as np
-from flcore.clients.clientdfpa import clientDFPA
+from flcore.clients.clientdfcc import clientDFCC
 from flcore.servers.serverbase import Server
 from threading import Thread
 from collections import defaultdict
@@ -9,13 +9,13 @@ import sys
 import torch
 
 
-class FedDFPA(Server):
+class FedDFCC(Server):
     def __init__(self, args, times):
         super().__init__(args, times)
 
         # select slow clients
         self.set_slow_clients()
-        self.set_clients(clientDFPA)
+        self.set_clients(clientDFCC)
 
         print(f"\nJoin ratio / total clients: {self.join_ratio} / {self.num_clients}")
         print("Finished creating server and clients.")
@@ -161,27 +161,26 @@ class FedDFPA(Server):
                 else:
                     inv_protos[key] = [proto]
 
-            protos = client.special_protos
-            for key, proto in protos.items():
-                if key in spe_protos.keys():
-                    spe_protos[key].extend(proto)
-                else:
-                    spe_protos[key] = proto
+            # protos = client.special_protos
+            # for key, proto in protos.items():
+            #     if key in spe_protos.keys():
+            #         spe_protos[key].extend(proto)
+            #     else:
+            #         spe_protos[key] = proto
 
         data, targets = [], []
         for key in spe_protos.keys():
             inv_proto = inv_protos[key]
-            spe_proto = spe_protos[key]
-            d = len(inv_proto)
+            # spe_proto = spe_protos[key]
+            # d = len(inv_proto)
             for i in range(self.virtual_representation_perclass):
                 inv_lambda = get_random_lambda(len(inv_proto))
-                spe_lambda = get_random_lambda(len(spe_proto))
+                # spe_lambda = get_random_lambda(len(spe_proto))
 
                 tmp_inv = sum(w*t.cpu() for w,t in zip(inv_lambda, inv_proto))
-                tmp_spe = sum(w*t.cpu() for w,t in zip(spe_lambda, spe_proto))
-
-                tmpdata = tmp_inv+tmp_spe
-                data.append(tmpdata[:d//2])
+                # tmp_spe = sum(w*t.cpu() for w,t in zip(spe_lambda, spe_proto))
+                # tmpdata = tmp_inv#+tmp_spe
+                data.append(tmp_inv)
                 targets.append(key)
         data = torch.cat(data)
         targets = torch.Tensor(targets)

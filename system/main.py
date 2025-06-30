@@ -49,6 +49,8 @@ from flcore.servers.serverda import PFL_DA
 from flcore.servers.serverlc import FedLC
 from flcore.servers.serveras import FedAS
 from flcore.servers.serverdfpa import FedDFPA
+from flcore.servers.serverdfcc import FedDFCC
+from flcore.servers.serverfsa import FedFSA
 
 from flcore.trainmodel.models import *
 
@@ -366,11 +368,16 @@ def run(args):
             server = FedLC(args, i)
 
         elif args.algorithm == 'FedAS':
-
             args.head = copy.deepcopy(args.model.fc)
             args.model.fc = nn.Identity()
             args.model = BaseHeadSplit(args.model, args.head)
             server = FedAS(args, i)
+
+        elif args.algorithm == 'FedFSA':
+            args.head = copy.deepcopy(args.model.fc)
+            args.model.fc = nn.Identity()
+            args.model = BaseHeadSplit(args.model, args.head)
+            server = FedFSA(args, i)
 
         elif args.algorithm == 'FedDFPA':
             args.head = copy.deepcopy(args.model.fc)
@@ -379,6 +386,14 @@ def run(args):
             args.decoder = Decoder(args.feature_dim, device=args.device)
             args.model = BaseMineSplit(args.model, args.head, args.headL, args.decoder).to(args.device)
             server = FedDFPA(args, i)
+
+        elif args.algorithm == 'FedDFCC':
+            args.head = nn.Linear(256, args.num_classes)
+            args.headL = nn.Linear(256, args.num_classes)
+            args.model.fc = nn.Identity()
+            args.decoder = Decoder(args.feature_dim, device=args.device)
+            args.model = BaseMineSplit(args.model, args.head, args.headL, args.decoder).to(args.device)
+            server = FedDFCC(args, i)
         else:
             raise NotImplementedError("{}".format(args.algorithm))
 
@@ -509,6 +524,8 @@ if __name__ == "__main__":
     parser.add_argument("--using_reconstructloss", type=str2bool, default=True)
     parser.add_argument("--using_tripletloss", type=str2bool, default=True)
     parser.add_argument("--using_specialloss", type=str2bool, default=True)
+    parser.add_argument("--using_aggregate", type=str2bool, default=False)
+    parser.add_argument("--using_glocla", type=str2bool, default=True)
 
 
     args = parser.parse_args()

@@ -82,7 +82,7 @@ def get_special_protos(protos_in):
             protos_vars[key] = [torch.zeros_like(proto_list[0].data)]
     return protos_meas, protos_vars
 
-class clientDFPA(Client):
+class clientDFCC(Client):
     def __init__(self, args, id, train_samples, test_samples, **kwargs):
         super().__init__(args, id, train_samples, test_samples, **kwargs)
 
@@ -111,6 +111,8 @@ class clientDFPA(Client):
             max_local_epochs = np.random.randint(1, max_local_epochs // 2)
 
         protos = defaultdict(list)
+        protos_inv = defaultdict(list)
+        protos_spe = defaultdict(list)
         for epoch in range(max_local_epochs):
             for i, (images, labels) in enumerate(trainloader):
                 if type(images) == type([]):
@@ -122,46 +124,50 @@ class clientDFPA(Client):
                     time.sleep(0.1 * np.abs(np.random.rand()))
                 embedding = self.model.base(images)
                 d = embedding.size(1)
-                embedding_inv = torch.cat((embedding[:, :d // 2], torch.zeros_like(embedding[:, d // 2:])), dim=1)
+                embedding_inv = embedding[:, :d // 2]
+                embedding_spe = embedding[:, d // 2:]
                 output_inv = self.model.head(embedding_inv)
                 lossCE_inv = self.loss(output_inv, labels)
                 loss = lossCE_inv
+                if self.global_protos is not None:
+                    proto_g = copy.deepcopy(embedding_inv.detach())
+                    for i, label in enumerate(labels):
+                        key = label.item()
+                        if type(self.global_protos[key]) != type([]):
+                            proto_g[i, :] = self.global_protos[key].data[:d//2]
+                    loss_proto = self.loss_mse(embedding_inv, proto_g.detach())
+                    loss += loss_proto * self.lamda
+
                 if self.using_reconstructloss:
                     reconstructed_image = self.model.decoder(embedding)
                     loss_recon = self.loss_mse(images, reconstructed_image)
                     loss += loss_recon * 0.1
 
-                if self.global_protos is not None:
-                    proto_g = copy.deepcopy(embedding.detach())
-                    proto_l = copy.deepcopy(embedding.detach())
-                    for i, label in enumerate(labels):
-                        key = label.item()
-                        if type(self.global_protos[key]) != type([]):
-                            proto_g[i, :] = self.global_protos[key].data
-                            try:
-                                proto_l[i, :] = self.protos[key].data
-                            except:
-                                if key not in self.protos.ksys():
-                                    print("{} not in local protos in client_{}".format(key,self.id))
-                                else:
-                                    print("error in client_{} as {}".format(self.id, self.protos[key]))
-                    loss_proto = self.loss_mse(embedding[:, :d // 2], proto_g[:, :d // 2].detach())
-                    loss += loss_proto * self.lamda
-                    if self.using_specialloss:
-                        embedding_spe = embedding - torch.cat((proto_g[:, :d // 2], torch.zeros_like(proto_g[:, d // 2:])), dim=1).detach()
-                        output_spe = self.model.headL(embedding_spe)
-                        lossCE_spe = self.loss(output_spe, labels)
-                        loss += lossCE_spe
+                if self.using_specialloss:
+                    output_spe = self.model.headL(embedding_spe)
+                    lossCE_spe = self.loss(output_spe, labels)
+                    loss += lossCE_spe
 
-                    if self.using_tripletloss:
-                        distance_positive = torch.nn.functional.pairwise_distance(embedding[:,d//2:], proto_l[:,d//2:])
-                        distance_negative = torch.nn.functional.pairwise_distance(embedding[:,d//2:], proto_g[:,d//2:])
-                        loss_triplet = torch.nn.functional.relu(distance_positive - distance_negative + self.margin).mean()
-                        loss += loss_triplet
+                if self.using_tripletloss:
+                    proto_g = copy.deepcopy(embedding_spe.detach())
+                    proto_l = copy.deepcopy(embedding_spe.detach())
+                    if self.global_protos is not None:
+                        for i, label in enumerate(labels):
+                            key = label.item()
+                            if key in self.global_protos.keys():
+                                proto_g[i, :] = self.global_protos[key].data[d//2:]
+                                proto_l[i, :] = self.protos[key].data[d//2:]
+                    distance_positive = torch.nn.functional.pairwise_distance(embedding_spe, proto_l)
+                    distance_negative = torch.nn.functional.pairwise_distance(embedding_spe, proto_g)
+                    loss_triplet = torch.nn.functional.relu(distance_positive - distance_negative + self.margin).mean()
+                    loss += loss_triplet
 
                 for i, yy in enumerate(labels):
                     y_c = yy.item()
                     protos[y_c].append(embedding[i, :].detach().data)
+                    protos_inv[y_c].append(embedding[i, :].detach().data[:d//2])
+                    protos_spe[y_c].append(embedding[i, :].detach().data[d//2:])
+
 
                 self.optimizer.zero_grad()
                 loss.backward()
@@ -173,8 +179,8 @@ class clientDFPA(Client):
 
         # protos = self.collect_protos()
         self.protos = agg_func(protos)
-        self.local_protos, self.local_protos_vars = get_protos_meanvar(protos)
-        self.special_protos, self.special_protos_vars = get_special_protos(protos)
+        self.local_protos, self.local_protos_vars = get_protos_meanvar(protos_inv)
+        # self.special_protos, self.special_protos_vars = get_special_protos(protos_spe)
 
         if self.learning_rate_decay:
             self.learning_rate_scheduler.step()
@@ -256,7 +262,8 @@ class clientDFPA(Client):
                     x = x.to(self.device)
                 y = y.to(self.device)
                 rep = self.model.base(x)
-                output = self.model.head(rep)
+                d = rep.size(1)
+                output = self.model.head(rep[:,:d//2])
                 loss = self.loss(output, y)
                 d = rep.size(1)
 
@@ -296,9 +303,10 @@ class clientDFPA(Client):
                 y = y.to(self.device)
                 rep = self.model.base(x)
                 d = rep.size(1)
-                embedding_inv = torch.cat((rep[:, :d // 2], torch.zeros_like(rep[:, d // 2:])), dim=1)
+                embedding_inv = rep[:, :d // 2]
+                embedding_spe = rep[:, d // 2:]
                 out_g = self.model.head(embedding_inv)
-                out_p = self.model.headL(rep.detach()-embedding_inv)
+                out_p = self.model.headL(embedding_spe)
                 output = torch.nn.functional.softmax(out_g.detach()) + torch.nn.functional.softmax(out_p.detach())
 
                 test_acc += (torch.sum(torch.argmax(out_g, dim=1) == y)).item()
@@ -376,7 +384,7 @@ def agg_func(protos_in):
     return protos
 
 def clone_defaultdict(protos):
-    cloned_protos = defaultdict(type(protos.default_factory))
+    cloned_protos = {}#defaultdict(type(protos.default_factory))
     for key, value in protos.items():
         if isinstance(value, torch.Tensor):
             cloned_protos[key] = value.clone()
