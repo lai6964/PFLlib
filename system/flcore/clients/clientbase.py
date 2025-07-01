@@ -80,7 +80,7 @@ class Client(object):
     def test_metrics(self):
         testloaderfull = self.load_test_data()
         # self.model = self.load_model('model')
-        # self.model.to(self.device)
+        self.model.to(self.device)
         self.model.eval()
 
         test_acc = 0

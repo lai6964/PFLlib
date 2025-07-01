@@ -23,7 +23,7 @@ class FedFSA(Server):
 
         # self.load_model()
         self.Budget = []
-        self.global_protos = None
+        self.global_protos = get_clip_textembeddings(args.dataset)
 
     def send_protos(self):
         assert (len(self.clients) > 0)
@@ -58,7 +58,7 @@ class FedFSA(Server):
 
 
             self.compute_local_plv_()
-            self.retrain_cls_relation_()
+            self.retrain_cls_relation_(i)
 
             self.Budget.append(time.time() - s_t)
             print('-'*25, 'time cost', '-'*25, self.Budget[-1])
@@ -66,10 +66,10 @@ class FedFSA(Server):
             if self.auto_break and self.check_done(acc_lss=[self.rs_test_acc], top_cnt=self.top_cnt):
                 break
 
-        print("\nBest accuracy.")
-        # self.print_(max(self.rs_test_acc), max(
-        #     self.rs_train_acc), min(self.rs_train_loss))
-        print(max(self.rs_test_acc))
+            print("\nBest accuracy.")
+            # self.print_(max(self.rs_test_acc), max(
+            #     self.rs_train_acc), min(self.rs_train_loss))
+            print(max(self.rs_test_acc))
         print("\nAverage time cost per round.")
         print(sum(self.Budget[1:])/len(self.Budget[1:]))
 
@@ -96,18 +96,18 @@ class FedFSA(Server):
         self.proto_labels = torch.cat(local_proto_label_list)
         self.local_vars = torch.cat(local_vars_list)
 
-    def retrain_cls_relation_(self, re_k=2, re_bs=32, dist_weight=1.0, angle_weight=1.0, re_mu=1.0, re_phase='p2'):
+    def retrain_cls_relation_(self, epoch, re_k=2, re_bs=32, dist_weight=1.0, angle_weight=1.0, re_mu=1.0, re_phase='p2'):
         prototypes = self.local_protos
         proto_labels = self.proto_labels
         local_vars = self.local_vars
 
 
-        if round < 5:
+        if epoch < 5:
             init_lr = 1e-1
         else:
             init_lr = 1e-2
 
-        model = self.global_model
+        model = self.global_model.head
         model.to(self.device)
         lr_decay = 40
         decay_rate = 0.1
@@ -121,7 +121,7 @@ class FedFSA(Server):
 
         local_protos = torch.cat([prototypes, local_protos])
         local_labels = torch.cat([proto_labels, local_labels])
-        print(proto_labels.shape)
+        # print(proto_labels.shape)
         #     ipdb.set_trace()
         #     optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
         optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, model.parameters()), lr=init_lr, weight_decay=1e-5)
@@ -155,7 +155,8 @@ class FedFSA(Server):
                             target.requires_grad = False
                             target = target.long()
                             # 只需要分类
-                            feats, out = model(x)
+                            # feats, out = model(x)
+                            out = model.head(x)
                             celoss = criterion(out, target)
                             relationloss = torch.tensor(0).cuda()
 
@@ -170,7 +171,9 @@ class FedFSA(Server):
                             target = torch.cat([target] * re_k)
                             x.requires_grad = True
                             target.requires_grad = False
-                            feats, out = model(x + random_vectors)
+                            # feats, out = model(x + random_vectors)
+                            # print(x.shape, random_vectors.shape)
+                            out = model(x + random_vectors)
 
                             celoss = criterion(out, target)
                             relationloss = torch.tensor(0).cuda()
@@ -186,55 +189,58 @@ class FedFSA(Server):
                             target_all = torch.cat([target] * (re_k + 1))
                             x_all.requires_grad = True
                             target_all.requires_grad = False
-                            feats, out = model(x_all)
+                            # feats, out = model(x_all)
+                            out = model(x_all)
                             celoss = criterion(out, target_all)
                             relationloss = torch.tensor(0).cuda()
-                        elif re_phase == 'p4':
-                            optimizer.zero_grad()
-                            target = target.long()
-                            # 增广+分类+原始+关系
-                            random_vectors = generate_random_vectors(batch_vars).cuda()
-                            x_ = x + random_vectors
-                            x_all = torch.cat([x, x_], dim=0)
-                            target_all = torch.cat([target, target])
-                            x_all.requires_grad = True
-                            target_all.requires_grad = False
-                            feats, out = model(x_all)
-                            celoss = criterion(out, target_all)
-                            relationloss = relation_criterion(feats, self.global_protos[target_all])
+                        # elif re_phase == 'p4':
+                        #     optimizer.zero_grad()
+                        #     target = target.long()
+                        #     # 增广+分类+原始+关系
+                        #     random_vectors = generate_random_vectors(batch_vars).cuda()
+                        #     x_ = x + random_vectors
+                        #     x_all = torch.cat([x, x_], dim=0)
+                        #     target_all = torch.cat([target, target])
+                        #     x_all.requires_grad = True
+                        #     target_all.requires_grad = False
+                        #     # feats, out = model(x_all)
+                        #     out = model(x_all)
+                        #     celoss = criterion(out, target_all)
+                        #     relationloss = relation_criterion(feats, self.global_protos[target_all])
                         loss = celoss + re_mu * relationloss
                         epoch_loss_collector.append(celoss.data)
                         epoch_relationloss_collector.append(relationloss.data)
 
                         loss.backward()
                         optimizer.step()
-            elif re_phase == 'p5':
-                for i in range((len(local_labels) + batch_size - 1) // batch_size):  # 向上取整计算需要多少批次
-                    start_index = i * batch_size
-                    end_index = min((i + 1) * batch_size, len(local_protos))  # 防止索引超出范围
-                    if end_index - start_index > 1:  # 确保批次不为空
-                        x = local_protos[idx_list[start_index:end_index]]
-                        target = local_labels[idx_list[start_index:end_index]]
-
-                        optimizer.zero_grad()
-                        x.requires_grad = True
-                        target.requires_grad = False
-                        target = target.long()
-                        feats, out = model(x)
-                        celoss = criterion(out, target)
-                        relationloss = relation_criterion(feats, self.global_protos[target])
-                        #                     if (torch.isnan(celoss).any()) or (torch.isnan(relationloss).any()):
-                    #                         ipdb.set_trace()
-                    # #                     import ipdb; ipdb.set_trace()
-                    loss = celoss + re_mu * relationloss
-
-                    epoch_loss_collector.append(celoss.data)
-                    epoch_relationloss_collector.append(relationloss.data)
-
-                    loss.backward()
-                    optimizer.step()
-            print(epoch, sum(epoch_loss_collector) / len(epoch_loss_collector), sum(epoch_relationloss_collector) / len(epoch_relationloss_collector))
-        self.global_model = model
+            # elif re_phase == 'p5':
+            #     for i in range((len(local_labels) + batch_size - 1) // batch_size):  # 向上取整计算需要多少批次
+            #         start_index = i * batch_size
+            #         end_index = min((i + 1) * batch_size, len(local_protos))  # 防止索引超出范围
+            #         if end_index - start_index > 1:  # 确保批次不为空
+            #             x = local_protos[idx_list[start_index:end_index]]
+            #             target = local_labels[idx_list[start_index:end_index]]
+            #
+            #             optimizer.zero_grad()
+            #             x.requires_grad = True
+            #             target.requires_grad = False
+            #             target = target.long()
+            #             # feats, out = model(x)
+            #             out = model(x)
+            #             celoss = criterion(out, target)
+            #             relationloss = relation_criterion(feats, self.global_protos[target])
+            #             #                     if (torch.isnan(celoss).any()) or (torch.isnan(relationloss).any()):
+            #         #                         ipdb.set_trace()
+            #         # #                     import ipdb; ipdb.set_trace()
+            #         loss = celoss + re_mu * relationloss
+            #
+            #         epoch_loss_collector.append(celoss.data)
+            #         epoch_relationloss_collector.append(relationloss.data)
+            #
+            #         loss.backward()
+            #         optimizer.step()
+            # print(epoch, sum(epoch_loss_collector) / len(epoch_loss_collector), sum(epoch_relationloss_collector) / len(epoch_relationloss_collector))
+        self.global_model.head = model
 
 def generate_random_vectors(var_vectors, k=1):
     random_vectors = []
@@ -369,3 +375,8 @@ def exp_lr_scheduler(optimizer, epoch, init_lr, lr_decay, decay_rate):
         param_group['lr'] = lr
     # 返回改变了学习率的optimizer
     return optimizer
+
+def get_clip_textembeddings(dataset_name):
+    file_path = 'flcore/clipdata/prototypes_{}.pth'.format(dataset_name.lower())
+    loaded_tensor = torch.load(file_path)
+    return loaded_tensor

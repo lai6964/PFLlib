@@ -30,6 +30,7 @@ class FedDFCC(Server):
         self.rs_test_acc3=[]
         self.using_aggregate = args.using_aggregate
         self.using_glocla = args.using_glocla
+        self.using_normal = args.using_normal
 
     def train(self):
         for i in range(self.global_rounds + 1):

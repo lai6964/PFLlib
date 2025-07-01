@@ -24,12 +24,12 @@ class clientFSA(Client):
             max_local_epochs = np.random.randint(1, max_local_epochs // 2)
 
         for epoch in range(max_local_epochs):
-            for i, (x, y) in enumerate(trainloader):
+            for i, (x, target) in enumerate(trainloader):
                 if type(x) == type([]):
                     x[0] = x[0].to(self.device)
                 else:
                     x = x.to(self.device)
-                y = y.to(self.device)
+                target = target.to(self.device)
 
                 x.requires_grad = True
                 target.requires_grad = False

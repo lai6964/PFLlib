@@ -8,6 +8,7 @@ from collections import defaultdict
 from utils.finch import FINCH
 from sklearn.preprocessing import label_binarize
 from sklearn import metrics
+import torch.nn.functional as F
 
 from openpyxl.styles.builtins import output
 
@@ -95,6 +96,7 @@ class clientDFCC(Client):
         self.using_tripletloss = args.using_tripletloss
         self.using_reconstructloss = args.using_reconstructloss
         self.using_specialloss = args.using_specialloss
+        self.using_normal = args.using_normal
 
     def train(self):
         trainloader = self.load_train_data()
@@ -129,6 +131,16 @@ class clientDFCC(Client):
                 output_inv = self.model.head(embedding_inv)
                 lossCE_inv = self.loss(output_inv, labels)
                 loss = lossCE_inv
+                if self.using_specialloss:
+                    output_spe = self.model.headL(embedding_spe)
+                    lossCE_spe = self.loss(output_spe, labels)
+                    loss += lossCE_spe
+
+                if self.using_normal:
+                    embedding = F.normalize(embedding, dim=1)
+                    embedding_inv = F.normalize(embedding_inv, dim=1)
+                    embedding_spe = F.normalize(embedding_spe, dim=1)
+
                 if self.global_protos is not None:
                     proto_g = copy.deepcopy(embedding_inv.detach())
                     for i, label in enumerate(labels):
@@ -143,10 +155,6 @@ class clientDFCC(Client):
                     loss_recon = self.loss_mse(images, reconstructed_image)
                     loss += loss_recon * 0.1
 
-                if self.using_specialloss:
-                    output_spe = self.model.headL(embedding_spe)
-                    lossCE_spe = self.loss(output_spe, labels)
-                    loss += lossCE_spe
 
                 if self.using_tripletloss:
                     proto_g = copy.deepcopy(embedding_spe.detach())
@@ -159,14 +167,15 @@ class clientDFCC(Client):
                                 proto_l[i, :] = self.protos[key].data[d//2:]
                     distance_positive = torch.nn.functional.pairwise_distance(embedding_spe, proto_l)
                     distance_negative = torch.nn.functional.pairwise_distance(embedding_spe, proto_g)
-                    loss_triplet = torch.nn.functional.relu(distance_positive - distance_negative + self.margin).mean()
-                    loss += loss_triplet
+                    # loss_triplet = torch.nn.functional.relu(distance_positive - distance_negative + self.margin).mean()
+                    loss_triplet = torch.mean(torch.clamp(distance_positive - distance_negative + self.margin, min=0.0))
+                    loss += loss_triplet * 0.1
 
                 for i, yy in enumerate(labels):
                     y_c = yy.item()
                     protos[y_c].append(embedding[i, :].detach().data)
-                    protos_inv[y_c].append(embedding[i, :].detach().data[:d//2])
-                    protos_spe[y_c].append(embedding[i, :].detach().data[d//2:])
+                    protos_inv[y_c].append(embedding_inv[i, :].detach())
+                    protos_spe[y_c].append(embedding_spe[i, :].detach())
 
 
                 self.optimizer.zero_grad()
@@ -206,7 +215,8 @@ class clientDFCC(Client):
                 if self.train_slow:
                     time.sleep(0.1 * np.abs(np.random.rand()))
                 rep = self.model.base(x)
-
+                if self.using_normal:
+                    rep = F.normalize(rep, dim=1)
                 for i, yy in enumerate(y):
                     y_c = yy.item()
                     protos[y_c].append(rep[i, :].detach().data)
@@ -232,6 +242,8 @@ class clientDFCC(Client):
                         x = x.to(self.device)
                     y = y.to(self.device)
                     rep = self.model.base(x)
+                    if self.using_normal:
+                        rep = F.normalize(rep, dim=1)
                     d = rep.size(1)
                     output = float('inf') * torch.ones(y.shape[0], self.num_classes).to(self.device)
                     for i, r in enumerate(rep):

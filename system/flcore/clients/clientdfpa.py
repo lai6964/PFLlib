@@ -156,8 +156,9 @@ class clientDFPA(Client):
                     if self.using_tripletloss:
                         distance_positive = torch.nn.functional.pairwise_distance(embedding[:,d//2:], proto_l[:,d//2:])
                         distance_negative = torch.nn.functional.pairwise_distance(embedding[:,d//2:], proto_g[:,d//2:])
-                        loss_triplet = torch.nn.functional.relu(distance_positive - distance_negative + self.margin).mean()
-                        loss += loss_triplet
+                        # loss_triplet = torch.nn.functional.relu(distance_positive - distance_negative + self.margin).mean()
+                        loss_triplet = torch.mean(torch.clamp(distance_positive - distance_negative + self.margin, min=0.0))
+                        loss += loss_triplet * 0.1
 
                 for i, yy in enumerate(labels):
                     y_c = yy.item()
