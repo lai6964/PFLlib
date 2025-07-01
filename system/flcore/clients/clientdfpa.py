@@ -141,7 +141,7 @@ class clientDFPA(Client):
                             try:
                                 proto_l[i, :] = self.protos[key].data
                             except:
-                                if key not in self.protos.ksys():
+                                if key not in self.protos.keys():
                                     print("{} not in local protos in client_{}".format(key,self.id))
                                 else:
                                     print("error in client_{} as {}".format(self.id, self.protos[key]))

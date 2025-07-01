@@ -435,7 +435,7 @@ if __name__ == "__main__":
                         help="For auto_break")
     parser.add_argument('-ls', "--local_epochs", type=int, default=5,
                         help="Multiple update steps in one local epoch.")
-    parser.add_argument('-algo', "--algorithm", type=str, default="FedAvg")
+    parser.add_argument('-algo', "--algorithm", type=str, default="FedDFCC")
     parser.add_argument('-jr', "--join_ratio", type=float, default=1.0,
                         help="Ratio of clients per round")
     parser.add_argument('-rjr', "--random_join_ratio", type=bool, default=False,

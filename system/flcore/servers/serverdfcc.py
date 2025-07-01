@@ -169,7 +169,7 @@ class FedDFCC(Server):
             #         spe_protos[key] = proto
 
         data, targets = [], []
-        for key in spe_protos.keys():
+        for key in inv_protos.keys():
             inv_proto = inv_protos[key]
             # spe_proto = spe_protos[key]
             # d = len(inv_proto)
@@ -182,7 +182,7 @@ class FedDFCC(Server):
                 # tmpdata = tmp_inv#+tmp_spe
                 data.append(tmp_inv)
                 targets.append(key)
-        data = torch.cat(data)
+        # data = torch.cat(data)
         targets = torch.Tensor(targets)
         # print(data.shape, targets.shape)
         dataset = RepresentationDataset(data, targets)
@@ -198,6 +198,7 @@ class FedDFCC(Server):
         self.classifier.train()
         for x, y in dataloader:
             x, y = x.to(self.device), y.to(self.device)
+            # print(x,y)
             logits = self.classifier(x)
             loss = criterion(logits, y.long())
             optimizer.zero_grad()
