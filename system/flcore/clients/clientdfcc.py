@@ -171,11 +171,12 @@ class clientDFCC(Client):
                     loss_triplet = torch.mean(torch.clamp(distance_positive - distance_negative + self.margin, min=0.0))
                     loss += loss_triplet * 0.1
 
-                for i, yy in enumerate(labels):
-                    y_c = yy.item()
-                    protos[y_c].append(embedding[i, :].detach().data)
-                    protos_inv[y_c].append(embedding_inv[i, :].detach())
-                    protos_spe[y_c].append(embedding_spe[i, :].detach())
+                if epoch==max_local_epochs-1:
+                    for i, yy in enumerate(labels):
+                        y_c = yy.item()
+                        protos[y_c].append(embedding[i, :].detach().data)
+                        protos_inv[y_c].append(embedding_inv[i, :].detach())
+                        protos_spe[y_c].append(embedding_spe[i, :].detach())
 
 
                 self.optimizer.zero_grad()
