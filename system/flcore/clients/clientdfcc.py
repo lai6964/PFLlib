@@ -116,7 +116,7 @@ class clientDFCC(Client):
         protos_inv = defaultdict(list)
         protos_spe = defaultdict(list)
         for epoch in range(max_local_epochs):
-            for i, (images, labels) in enumerate(trainloader):
+            for images, labels in trainloader:
                 if type(images) == type([]):
                     images[0] = images[0].to(self.device)
                 else:
@@ -163,8 +163,23 @@ class clientDFCC(Client):
                         for i, label in enumerate(labels):
                             key = label.item()
                             if key in self.global_protos.keys():
-                                proto_g[i, :] = self.global_protos[key].data[d//2:]
-                                proto_l[i, :] = self.protos[key].data[d//2:]
+                                # if key not in self.protos.keys():
+                                #     print(self.protos.keys())
+                                #     raise ValueError("not key {} in this client {}".format(key, self.id))
+                                # else:
+                                #     try:
+                                #         proto_l[i, :] = self.protos[key].data[d // 2:]
+                                #     except:
+                                #         print("key {} in this client {}".format(key, self.id))
+                                #         print(self.protos[key])
+                                #         raise Exception("程序终止异常")
+
+                                if self.using_normal:
+                                    proto_g[i, :] = self.global_protos[key].data
+                                    proto_l[i, :] = self.protos[key].data
+                                else:
+                                    proto_g[i, :] = self.global_protos[key].data[d//2:]
+                                    proto_l[i, :] = self.protos[key].data[d//2:]
                     distance_positive = torch.nn.functional.pairwise_distance(embedding_spe, proto_l)
                     distance_negative = torch.nn.functional.pairwise_distance(embedding_spe, proto_g)
                     # loss_triplet = torch.nn.functional.relu(distance_positive - distance_negative + self.margin).mean()
@@ -182,6 +197,8 @@ class clientDFCC(Client):
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
+        # print("id",self.id)
+        # print("len(protos):",len(protos))
 
         # self.model.cpu()
         # rep = self.model.base(x)
@@ -189,8 +206,29 @@ class clientDFCC(Client):
 
         # protos = self.collect_protos()
         self.protos = agg_func(protos)
+        # print("len(self.protos):",len(self.protos))
         self.local_protos, self.local_protos_vars = get_protos_meanvar(protos_inv)
         # self.special_protos, self.special_protos_vars = get_special_protos(protos_spe)
+        # print("len(self.protos):",len(self.protos))
+
+        # tmplist = []
+        # for images, labels in trainloader:
+        #     for label in labels:
+        #         y_c = label.item()
+        #         if y_c not in tmplist:
+        #             tmplist.append(y_c)
+        # print("len(tmplist):",len(tmplist))
+        # for key in tmplist:
+        #     if key not in self.protos.keys():
+        #         print("{}=={}?".format(len(tmplist), len(self.protos.keys())))
+        #         print("aaa not key {} in this client {}".format(key, self.id))
+        #         if key in protos.keys():
+        #             print(protos[key])
+        #         else:
+        #             print("not in protos too")
+        #         self.protos = agg_func(protos)
+        #         raise ValueError("aaa not key {} in this client {}".format(key, self.id))
+
 
         if self.learning_rate_decay:
             self.learning_rate_scheduler.step()

@@ -10,7 +10,7 @@ class clientFSA(Client):
         super().__init__(args, id, train_samples, test_samples, **kwargs)
         self.temperature=0.5
         self.mu=2
-        self.global_protos = {}
+        self.global_protos = None
 
     def train(self):
         trainloader = self.load_train_data()

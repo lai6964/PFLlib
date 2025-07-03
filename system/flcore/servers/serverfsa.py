@@ -9,6 +9,7 @@ import random
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import copy
 
 class FedFSA(Server):
     def __init__(self, args, times):
@@ -103,11 +104,11 @@ class FedFSA(Server):
 
 
         if epoch < 5:
-            init_lr = 1e-1
+            init_lr = 5e-3#1e-1
         else:
-            init_lr = 1e-2
+            init_lr = 5e-4#1e-2
 
-        model = self.global_model.head
+        model = copy.deepcopy(self.global_model.head)
         model.to(self.device)
         lr_decay = 40
         decay_rate = 0.1
@@ -135,7 +136,7 @@ class FedFSA(Server):
         batch_size = re_bs
 
         for epoch in range(100):
-            optimizer = exp_lr_scheduler(optimizer, epoch, init_lr, lr_decay, decay_rate)
+            # optimizer = exp_lr_scheduler(optimizer, epoch, init_lr, lr_decay, decay_rate)
             random.shuffle(idx_list)
 
             epoch_loss_collector = []
@@ -240,7 +241,7 @@ class FedFSA(Server):
             #         loss.backward()
             #         optimizer.step()
             # print(epoch, sum(epoch_loss_collector) / len(epoch_loss_collector), sum(epoch_relationloss_collector) / len(epoch_relationloss_collector))
-        self.global_model.head = model
+        self.global_model.head.load_state_dict(model.state_dict())
 
 def generate_random_vectors(var_vectors, k=1):
     random_vectors = []

@@ -8,6 +8,7 @@ import warnings
 import numpy as np
 import torchvision
 import logging
+import random
 
 from flcore.servers.serveravg import FedAvg
 from flcore.servers.serverpFedMe import pFedMe
@@ -411,6 +412,15 @@ def run(args):
 
     reporter.report()
 
+def init_seed(seed=42):
+	random.seed(seed)
+	os.environ['PYTHONHASHSEED'] = str(seed) # 为了禁止hash随机化，使得实验可复现
+	np.random.seed(seed)
+	torch.manual_seed(seed)
+	torch.cuda.manual_seed(seed)
+	torch.cuda.manual_seed_all(seed) # if you are using multi-GPU.
+	torch.backends.cudnn.benchmark = False
+	torch.backends.cudnn.deterministic = True
 
 if __name__ == "__main__":
     total_start = time.time()
@@ -524,13 +534,14 @@ if __name__ == "__main__":
     parser.add_argument("--using_reconstructloss", type=str2bool, default=True)
     parser.add_argument("--using_tripletloss", type=str2bool, default=True)
     parser.add_argument("--using_specialloss", type=str2bool, default=True)
-    parser.add_argument("--using_aggregate", type=str2bool, default=False)
     parser.add_argument("--using_glocla", type=str2bool, default=True)
     parser.add_argument("--using_normal", type=str2bool, default=False)
-    # python main.py -data Cifar100 -algo FedDFCC -did 1 --using_reconstructloss False --using_tripletloss False --using_specialloss False --using_glocla False --using_normal False | tee FedDCC_cifar100_FFFFF.log
+    parser.add_argument("--using_aggregate", type=str2bool, default=False)
+    # python main.py -data Cifar100 -algo FedDFCC -did 1 --using_reconstructloss False --using_tripletloss False --using_specialloss False --using_glocla False --using_aggregate False | tee FedDCC_cifar100_FFFFF.log
 
 
     args = parser.parse_args()
+    init_seed(42)
 
     os.environ["CUDA_VISIBLE_DEVICES"] = args.device_id
 
