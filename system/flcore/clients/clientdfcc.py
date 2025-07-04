@@ -136,6 +136,11 @@ class clientDFCC(Client):
                     lossCE_spe = self.loss(output_spe, labels)
                     loss += lossCE_spe
 
+                if self.using_reconstructloss:
+                    reconstructed_image = self.model.decoder(embedding)
+                    loss_recon = self.loss_mse(images, reconstructed_image)
+                    loss += loss_recon * 0.1
+
                 if self.using_normal:
                     embedding = F.normalize(embedding, dim=1)
                     embedding_inv = F.normalize(embedding_inv, dim=1)
@@ -150,41 +155,20 @@ class clientDFCC(Client):
                     loss_proto = self.loss_mse(embedding_inv, proto_g.detach())
                     loss += loss_proto * self.lamda
 
-                if self.using_reconstructloss:
-                    reconstructed_image = self.model.decoder(embedding)
-                    loss_recon = self.loss_mse(images, reconstructed_image)
-                    loss += loss_recon * 0.1
 
-
-                if self.using_tripletloss:
-                    proto_g = copy.deepcopy(embedding_spe.detach())
-                    proto_l = copy.deepcopy(embedding_spe.detach())
-                    if self.global_protos is not None:
+                    if self.using_tripletloss:
+                        proto_g = copy.deepcopy(embedding_spe.detach())
+                        proto_l = copy.deepcopy(embedding_spe.detach())
                         for i, label in enumerate(labels):
                             key = label.item()
                             if key in self.global_protos.keys():
-                                # if key not in self.protos.keys():
-                                #     print(self.protos.keys())
-                                #     raise ValueError("not key {} in this client {}".format(key, self.id))
-                                # else:
-                                #     try:
-                                #         proto_l[i, :] = self.protos[key].data[d // 2:]
-                                #     except:
-                                #         print("key {} in this client {}".format(key, self.id))
-                                #         print(self.protos[key])
-                                #         raise Exception("程序终止异常")
-
-                                if self.using_normal:
-                                    proto_g[i, :] = self.global_protos[key].data
-                                    proto_l[i, :] = self.protos[key].data
-                                else:
-                                    proto_g[i, :] = self.global_protos[key].data[d//2:]
-                                    proto_l[i, :] = self.protos[key].data[d//2:]
-                    distance_positive = torch.nn.functional.pairwise_distance(embedding_spe, proto_l)
-                    distance_negative = torch.nn.functional.pairwise_distance(embedding_spe, proto_g)
-                    # loss_triplet = torch.nn.functional.relu(distance_positive - distance_negative + self.margin).mean()
-                    loss_triplet = torch.mean(torch.clamp(distance_positive - distance_negative + self.margin, min=0.0))
-                    loss += loss_triplet * 0.1
+                                proto_g[i, :] = self.global_protos[key].data[d//2:]
+                                proto_l[i, :] = self.special_protos[key].data
+                        distance_positive = torch.nn.functional.pairwise_distance(embedding_spe, proto_l)
+                        distance_negative = torch.nn.functional.pairwise_distance(embedding_spe, proto_g)
+                        # loss_triplet = torch.nn.functional.relu(distance_positive - distance_negative + self.margin).mean()
+                        loss_triplet = torch.mean(torch.clamp(distance_positive - distance_negative + self.margin, min=0.0))
+                        loss += loss_triplet * 0.1
 
                 if epoch==max_local_epochs-1:
                     for i, yy in enumerate(labels):
@@ -209,6 +193,7 @@ class clientDFCC(Client):
         # print("len(self.protos):",len(self.protos))
         self.local_protos, self.local_protos_vars = get_protos_meanvar(protos_inv)
         # self.special_protos, self.special_protos_vars = get_special_protos(protos_spe)
+        self.special_protos, self.special_protos_vars = get_protos_meanvar(protos_spe)
         # print("len(self.protos):",len(self.protos))
 
         # tmplist = []
@@ -237,7 +222,7 @@ class clientDFCC(Client):
         self.train_time_cost['total_cost'] += time.time() - start_time
 
     def set_protos(self, global_protos):
-        self.global_protos = global_protos
+        self.global_protos = copy.deepcopy(global_protos)
 
     def collect_protos(self):
         trainloader = self.load_train_data()
