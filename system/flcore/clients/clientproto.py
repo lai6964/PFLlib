@@ -5,6 +5,7 @@ import numpy as np
 import time
 from flcore.clients.clientbase import Client
 from collections import defaultdict
+import os
 
 
 class clientProto(Client):
@@ -126,10 +127,16 @@ class clientProto(Client):
                     test_acc += (torch.sum(torch.argmin(output, dim=1) == y)).item()
                     test_num += y.shape[0]
 
+            self.save_local_model()
             return test_acc, test_num, 0
         else:
             return 0, 1e-5, 0
-
+    def save_local_model(self):
+        model_path = os.path.join("models", self.dataset)
+        if not os.path.exists(model_path):
+            os.makedirs(model_path)
+        model_path = os.path.join(model_path, self.algorithm + "_client_{}.pt".format(self.id))
+        torch.save(self.model, model_path)
     def train_metrics(self):
         trainloader = self.load_train_data()
         # self.model = self.load_model('model')

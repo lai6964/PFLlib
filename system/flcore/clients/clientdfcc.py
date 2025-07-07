@@ -9,6 +9,7 @@ from utils.finch import FINCH
 from sklearn.preprocessing import label_binarize
 from sklearn import metrics
 import torch.nn.functional as F
+import os
 
 from openpyxl.styles.builtins import output
 
@@ -97,6 +98,9 @@ class clientDFCC(Client):
         self.using_reconstructloss = args.using_reconstructloss
         self.using_specialloss = args.using_specialloss
         self.using_normal = args.using_normal
+        self.using_glocla = args.using_glocla
+        self.firsttime = True
+        self.protos_num=self.extract_protonum()
 
     def train(self):
         trainloader = self.load_train_data()
@@ -105,8 +109,49 @@ class clientDFCC(Client):
         # self.model.to(self.device)
         self.model.train()
 
-        for param in self.model.head.parameters():  # 冻结 特征提取层 的权重
+
+        for param in self.model.base.parameters():
             param.requires_grad = False
+        for param in self.model.headL.parameters():
+            param.requires_grad = True
+        if not self.using_glocla:
+            for param in self.model.head.parameters():
+                param.requires_grad = True
+
+
+        for i, (x, y) in enumerate(trainloader):
+            if type(x) == type([]):
+                x[0] = x[0].to(self.device)
+            else:
+                x = x.to(self.device)
+            y = y.to(self.device)
+            if self.train_slow:
+                time.sleep(0.1 * np.abs(np.random.rand()))
+            rep = self.model.base(x)
+            d = rep.size(1)
+            output = self.model.headL(rep[:,d//2:])
+            loss = self.loss(output, y)
+            if not self.using_glocla:
+                output = self.model.head(rep[:,:d//2])
+                loss += self.loss(output, y)
+
+
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+
+        for param in self.model.base.parameters():
+            param.requires_grad = True
+        for param in self.model.headL.parameters():
+            param.requires_grad = False
+        if not self.using_glocla:
+            for param in self.model.head.parameters():
+                param.requires_grad = False
+
+        if self.using_glocla:# and self.firsttime:
+            for param in self.model.head.parameters():
+                param.requires_grad = False
+            # self.firsttime = False
 
         max_local_epochs = self.local_epochs
         if self.train_slow:
@@ -116,6 +161,7 @@ class clientDFCC(Client):
         protos_inv = defaultdict(list)
         protos_spe = defaultdict(list)
         for epoch in range(max_local_epochs):
+            total_invloss, total_speloss, total_triloss, total_proloss = 0,0,0,0
             for images, labels in trainloader:
                 if type(images) == type([]):
                     images[0] = images[0].to(self.device)
@@ -130,11 +176,13 @@ class clientDFCC(Client):
                 embedding_spe = embedding[:, d // 2:]
                 output_inv = self.model.head(embedding_inv)
                 lossCE_inv = self.loss(output_inv, labels)
+                total_invloss+=lossCE_inv.item()
                 loss = lossCE_inv
                 if self.using_specialloss:
                     output_spe = self.model.headL(embedding_spe)
                     lossCE_spe = self.loss(output_spe, labels)
                     loss += lossCE_spe
+                    total_speloss+=lossCE_spe.item()
 
                 if self.using_reconstructloss:
                     reconstructed_image = self.model.decoder(embedding)
@@ -152,8 +200,9 @@ class clientDFCC(Client):
                         key = label.item()
                         if type(self.global_protos[key]) != type([]):
                             proto_g[i, :] = self.global_protos[key].data[:d//2]
-                    loss_proto = self.loss_mse(embedding_inv, proto_g.detach())
-                    loss += loss_proto * self.lamda
+                    loss_proto = self.loss_mse(embedding_inv, proto_g.detach()) * self.lamda
+                    loss += loss_proto
+                    total_proloss+=loss_proto.item()
 
 
                     if self.using_tripletloss:
@@ -167,8 +216,9 @@ class clientDFCC(Client):
                         distance_positive = torch.nn.functional.pairwise_distance(embedding_spe, proto_l)
                         distance_negative = torch.nn.functional.pairwise_distance(embedding_spe, proto_g)
                         # loss_triplet = torch.nn.functional.relu(distance_positive - distance_negative + self.margin).mean()
-                        loss_triplet = torch.mean(torch.clamp(distance_positive - distance_negative + self.margin, min=0.0))
-                        loss += loss_triplet * 0.1
+                        loss_triplet = torch.mean(torch.clamp(distance_positive - distance_negative + self.margin, min=0.0)) * 0.1
+                        loss += loss_triplet
+                        total_triloss+=loss_triplet.item()
 
                 if epoch==max_local_epochs-1:
                     for i, yy in enumerate(labels):
@@ -181,6 +231,8 @@ class clientDFCC(Client):
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
+
+            # print("epoch:{}\tinv:{:.6f}\tspe:{:.6f}\ttri:{:.6f}\tpro:{:.6f}".format(epoch,total_invloss/self.train_samples,total_speloss/self.train_samples,total_triloss/self.train_samples,total_proloss/self.train_samples))
         # print("id",self.id)
         # print("len(protos):",len(protos))
 
@@ -220,6 +272,7 @@ class clientDFCC(Client):
 
         self.train_time_cost['num_rounds'] += 1
         self.train_time_cost['total_cost'] += time.time() - start_time
+        # self.test_acc, self.test_num, self.auc, self.test_acc2 = self.test_metrics2(self.model)
 
     def set_protos(self, global_protos):
         self.global_protos = copy.deepcopy(global_protos)
@@ -363,6 +416,8 @@ class clientDFCC(Client):
 
         auc = metrics.roc_auc_score(y_true, y_prob, average='micro')
 
+        self.save_local_model()
+
         return test_acc, test_num, auc, test_acc2
     #
     # def train_metrics(self):
@@ -400,6 +455,45 @@ class clientDFCC(Client):
     def set_parameters(self, model):
         for new_param, old_param in zip(model.base.parameters(), self.model.base.parameters()):
             old_param.data = new_param.data.clone()
+
+    def extract_protonum(self):
+        py = torch.zeros(self.num_classes)
+        for x, y in self.load_train_data():
+            for yy in y:
+                py[yy.item()] += 1
+        return py
+    def save_local_model(self):
+        model_path = os.path.join("models", self.dataset)
+        if not os.path.exists(model_path):
+            os.makedirs(model_path)
+        model_path = os.path.join(model_path, self.algorithm + "_client_{}.pt".format(self.id))
+        torch.save(self.model, model_path)
+
+    def train_one_step(self):
+        trainloader = self.load_train_data(self.batch_size)
+        iter_loader = iter(trainloader)
+        # self.model.to(self.device)
+        self.model.train()
+        for param in self.model.parameters():
+            param.requires_grad = True
+
+        (x, y) = next(iter_loader)
+        if type(x) == type([]):
+            x[0] = x[0].to(self.device)
+        else:
+            x = x.to(self.device)
+        y = y.to(self.device)
+        rep = self.model.base(x)
+        d = rep.size(1)
+        embedding_inv = rep[:, :d // 2]
+        embedding_spe = rep[:, d // 2:]
+        out_g = self.model.head(embedding_inv)
+        out_p = self.model.headL(embedding_spe)
+
+        loss = self.loss(out_g, y)+self.loss(out_p, y)
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
 
 
 # https://github.com/yuetan031/fedproto/blob/main/lib/utils.py#L205
