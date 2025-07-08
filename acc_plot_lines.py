@@ -31,6 +31,7 @@ for algo, color, marker in zip(algorithms, colors, markers):
     try:
         # 读取数据
         data = read_data(algo)
+        print("{}:{}".format(algo,max(data)))
 
         # 绘制准确率曲线
         plt.plot(data, label=algo, color=color, marker='*')
