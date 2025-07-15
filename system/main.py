@@ -52,6 +52,7 @@ from flcore.servers.serveras import FedAS
 from flcore.servers.serverdfpa import FedDFPA
 from flcore.servers.serverdfcc import FedDFCC
 from flcore.servers.serverfsa import FedFSA
+from flcore.servers.serverdfgc import FedDFGC
 
 from flcore.trainmodel.models import *
 
@@ -394,6 +395,13 @@ def run(args):
             args.decoder = Decoder(args.feature_dim, device=args.device)
             args.model = BaseMineSplit(args.model, args.head, args.headL, args.decoder).to(args.device)
             server = FedDFCC(args, i)
+        elif args.algorithm == 'FedDFGC':
+            args.head = copy.deepcopy(args.model.fc)
+            args.headL = nn.Linear(256, args.num_classes)
+            args.model.fc = nn.Identity()
+            args.decoder = Decoder(args.feature_dim, device=args.device)
+            args.model = BaseMineSplit(args.model, args.head, args.headL, args.decoder).to(args.device)
+            server = FedDFGC(args, i)
         else:
             raise NotImplementedError("{}".format(args.algorithm))
 
@@ -440,7 +448,7 @@ if __name__ == "__main__":
                         help="Local learning rate")
     parser.add_argument('-ld', "--learning_rate_decay", type=bool, default=False)
     parser.add_argument('-ldg', "--learning_rate_decay_gamma", type=float, default=0.99)
-    parser.add_argument('-gr', "--global_rounds", type=int, default=100)
+    parser.add_argument('-gr', "--global_rounds", type=int, default=41)
     parser.add_argument('-tc', "--top_cnt", type=int, default=100, 
                         help="For auto_break")
     parser.add_argument('-ls', "--local_epochs", type=int, default=5,
@@ -456,7 +464,7 @@ if __name__ == "__main__":
                         help="Previous Running times")
     parser.add_argument('-t', "--times", type=int, default=1,
                         help="Running times")
-    parser.add_argument('-eg', "--eval_gap", type=int, default=1,
+    parser.add_argument('-eg', "--eval_gap", type=int, default=10,
                         help="Rounds gap for evaluation")
     parser.add_argument('-sfn', "--save_folder_name", type=str, default='items')
     parser.add_argument('-ab', "--auto_break", type=bool, default=False)

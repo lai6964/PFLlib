@@ -16,6 +16,8 @@ def get_datalodaer(dataset, id):
 
 if __name__ == '__main__':
 
+    labelname = ['apple', 'aquarium_fish', 'baby', 'bear', 'beaver']
+
     device =torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     # model = FedAvgCNN(in_features=3, num_classes=100, dim=10816).to(device)
     # head = copy.deepcopy(model.fc)
@@ -34,7 +36,8 @@ if __name__ == '__main__':
         dataloader = get_datalodaer(dataset,id)
         # tmp_model = copy.deepcopy(model)
         # tmp_model.load_state_dict(torch.load("models/Cifar100_01/FedDFCC_client_{}.pt".format(id), weights_only=False))
-        tmp_model = torch.load("models/Cifar100_base/{}_client_{}.pt".format(algo, id), weights_only=False)
+        tmp_model = torch.load("models/Cifar100_head/{}_client_{}.pt".format(algo, id), weights_only=False)
+        # tmp_model = torch.load("models/Cifar100/{}_client_{}.pt".format(algo, id), weights_only=False)
         # tmp_model = torch.load("models/Cifar100/{}_server.pt".format(algo), weights_only=False)
         with torch.no_grad():
             for x, y in dataloader:
@@ -43,9 +46,14 @@ if __name__ == '__main__':
                 else:
                     x = x.to(device)
                 y = y.to(device)
-                rep = tmp_model.base(x)
-                d = rep.size(1)
-                rep = rep[:, :d // 2]
+                if algo=='PerAvg':
+                    rep = tmp_model(x)
+                else:
+                    rep = tmp_model.base(x)
+                    if algo == 'FedDPCC':
+                        d = rep.size(1)
+                        # rep = rep[:, :d // 2]
+                        rep = rep[:, d // 2:]
                 # embedding_inv = rep[:, :d // 2]
                 # embedding_spe = rep[:, d // 2:]
                 # out_g = tmp_model.head(embedding_inv)
@@ -75,30 +83,35 @@ if __name__ == '__main__':
     # 使用t-SNE进行降维
     reduced_features = tsne.fit_transform(features)
 
-    # 绘制t-SNE图
-    plt.figure(figsize=(8, 6))
-    unique_labels = list(set(labels))
-    colors = plt.cm.get_cmap('tab10', len(unique_labels))  # 获取颜色映射
-    for i, label in enumerate(unique_labels):
-        # 找到对应标签的所有点
-        label_indices = [j for j, l in enumerate(labels) if l == label]
-        plt.scatter(reduced_features[label_indices, 0], reduced_features[label_indices, 1], label=label,
-                    color=colors(i))
-
-    # # 绘制t-SNE图2
+    # # 绘制t-SNE图
     # plt.figure(figsize=(8, 6))
-    # unique_labels = list(set(ids))
+    # unique_labels = list(set(labels))
     # colors = plt.cm.get_cmap('tab10', len(unique_labels))  # 获取颜色映射
     # for i, label in enumerate(unique_labels):
     #     # 找到对应标签的所有点
-    #     label_indices = [j for j, l in enumerate(ids) if l == label]
-    #     plt.scatter(reduced_features[label_indices, 0], reduced_features[label_indices, 1], label=label,
-    #                 color=colors(i))
+    #     label_indices = [j for j, l in enumerate(labels) if l == label]
+    #     plt.scatter(reduced_features[label_indices, 0], reduced_features[label_indices, 1], label=labelname[label], color=colors(i))
+    #     # plt.scatter(reduced_features[label_indices, 0], reduced_features[label_indices, 1], color=colors(i))
+
+    # 绘制t-SNE图2
+    plt.figure(figsize=(8, 6))
+    unique_labels = list(set(ids))
+    colors = plt.cm.get_cmap('tab10', len(unique_labels))  # 获取颜色映射
+    for i, label in enumerate(unique_labels):
+        # 找到对应标签的所有点
+        label_indices = [j for j, l in enumerate(ids) if l == label]
+        plt.scatter(reduced_features[label_indices, 0], reduced_features[label_indices, 1], label='client_'+str(label),
+                    color=colors(i))
 
 
-    plt.title('t-SNE visualization')
-    plt.xlabel('Component 1')
-    plt.ylabel('Component 2')
+    # plt.title('t-SNE visualization')
+    # plt.xlabel('Component 1')
+    # plt.ylabel('Component 2')
+    # plt.axis('off')
+    ax = plt.gca()  # 获取当前坐标轴对象
+    ax.set_xticks([])  # 隐藏 x 轴刻度
+    ax.set_yticks([])  # 隐藏 y 轴刻度
     plt.legend()
-    plt.grid(True)
+    # plt.grid(True)
+    plt.savefig("tmp.png")
     plt.show()

@@ -4,7 +4,7 @@ import time
 import copy
 from flcore.optimizers.fedoptimizer import PerAvgOptimizer
 from flcore.clients.clientbase import Client
-
+import os
 
 class clientPerAvg(Client):
     def __init__(self, args, id, train_samples, test_samples, **kwargs):
@@ -99,6 +99,7 @@ class clientPerAvg(Client):
         self.optimizer.step()
 
         # self.model.cpu()
+        self.save_local_model()
 
 
     def train_metrics(self, model=None):
@@ -160,3 +161,11 @@ class clientPerAvg(Client):
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
+        self.save_local_model()
+
+    def save_local_model(self):
+        model_path = os.path.join("models", self.dataset)
+        if not os.path.exists(model_path):
+            os.makedirs(model_path)
+        model_path = os.path.join(model_path, self.algorithm + "_client_{}.pt".format(self.id))
+        torch.save(self.model, model_path)

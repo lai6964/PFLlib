@@ -98,7 +98,7 @@ def train(model, dataloader):
 
 
 def plot_mine(images, respic, resimg):
-    fig, ax = plt.subplots(2, 3, figsize=(8, 4))
+    fig, ax = plt.subplots(2, 3, figsize=(3, 2))
     for i in range(2):
         # 显示原始图像
         restored_img1 = recover_image(images[i])

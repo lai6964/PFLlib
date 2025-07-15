@@ -1,11 +1,11 @@
 import matplotlib.pyplot as plt
 
 
-# datadir = "cnn_cifar100_01"
-# lastname = "_cifar100.log"
+datadir = "cnn_cifar100_01"
+lastname = "_cifar100.log"
 
-datadir = "res_tiny_01"
-lastname = "_tiny.log"
+# datadir = "res_tiny_01"
+# lastname = "_tiny.log"
 
 
 def read_data(name):
@@ -26,7 +26,7 @@ colors = ['blue', 'yellow', 'purple', 'orange', 'gray', 'lightblue', 'red', 'bla
 markers = ['_', '_', '_', '_', '_', '_', '_', '_']
 
 # 读取数据并绘制图形
-plt.figure(figsize=(10, 5))
+plt.figure(figsize=(5, 5))
 for algo, color, marker in zip(algorithms, colors, markers):
     try:
         # 读取数据
@@ -41,9 +41,9 @@ for algo, color, marker in zip(algorithms, colors, markers):
 # 添加图例、标题和标签
 plt.legend()
 # plt.title('Accuracy Curve on Cifar100')
-plt.title('Accuracy Curve on TinyImagenet')
-plt.xlabel('Epoch')
-plt.ylabel('Accuracy')
+# plt.title('Accuracy Curve on TinyImagenet')
+plt.xlabel('Commincation round T')
+plt.ylabel('Test Accuracy')
 
 # 显示图形
 plt.savefig(f"{datadir}/{lastname[:-4]}.png")
