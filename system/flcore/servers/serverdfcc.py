@@ -29,6 +29,7 @@ class FedDFCC(Server):
         self.virtual_representation_perclass = 200
         self.rs_test_acc2=[]
         self.rs_test_acc3=[]
+        self.rs_test_acc4=[]
         self.using_aggregate = args.using_aggregate
         self.using_glocla = args.using_glocla
         self.using_normal = args.using_normal
@@ -81,6 +82,7 @@ class FedDFCC(Server):
                 print(max(self.rs_test_acc))
                 print(max(self.rs_test_acc2))
                 print(max(self.rs_test_acc3))
+                print(max(self.rs_test_acc4))
             self.save_global_model()
         print(sum(self.Budget[1:]) / len(self.Budget[1:]))
 
@@ -115,20 +117,21 @@ class FedDFCC(Server):
 
         num_samples = []
         tot_correct = []
-        tot_correct2, tot_correct3 = [],[]
+        tot_correct2, tot_correct3, tot_correct4 = [],[],[]
         tot_auc = []
         for c in self.clients:
             ct, ns, auc = c.test_metrics()
-            ct2, ns2, auc2, ct3 = c.test_metrics2()
+            ct2, ns2, auc2, ct3, ct4 = c.test_metrics2()
             tot_correct.append(ct * 1.0)
             tot_correct2.append(ct2 * 1.0)
             tot_correct3.append(ct3 * 1.0)
+            tot_correct4.append(ct4 * 1.0)
             tot_auc.append(auc * ns)
             num_samples.append(ns2)
 
         ids = [c.id for c in self.clients]
 
-        return ids, num_samples, tot_correct, tot_auc, tot_correct2, tot_correct3
+        return ids, num_samples, tot_correct, tot_auc, tot_correct2, tot_correct3, tot_correct4
 
     def evaluate(self, acc=None, loss=None):
         stats = self.test_metrics()
@@ -137,6 +140,7 @@ class FedDFCC(Server):
         test_acc = sum(stats[2])*1.0 / sum(stats[1])
         test_acc2 = sum(stats[4])*1.0 / sum(stats[1])
         test_acc3 = sum(stats[5])*1.0 / sum(stats[1])
+        test_acc4 = sum(stats[6])*1.0 / sum(stats[1])
         train_loss = sum(stats_train[2]) * 1.0 / sum(stats_train[1])
         accs = [a / n for a, n in zip(stats[2], stats[1])]
 
@@ -144,6 +148,7 @@ class FedDFCC(Server):
             self.rs_test_acc.append(test_acc)
             self.rs_test_acc2.append(test_acc2)
             self.rs_test_acc3.append(test_acc3)
+            self.rs_test_acc4.append(test_acc4)
         else:
             acc.append(test_acc)
 
@@ -156,6 +161,7 @@ class FedDFCC(Server):
         print("Averaged Test Accuracy: {:.4f}".format(test_acc))
         print("Averaged Test Accuracy2: {:.4f}".format(test_acc2))
         print("Averaged Test Accuracy3: {:.4f}".format(test_acc3))
+        print("Averaged Test Accuracy4: {:.4f}".format(test_acc4))
         # self.print_(test_acc, train_acc, train_loss)
         print("Std Test Accuracy: {:.4f}".format(np.std(accs)))
 
@@ -241,20 +247,17 @@ class FedDFCC(Server):
             client.send_time_cost['total_cost'] += 2 * (time.time() - start_time)
 
     def evaluate_one_step(self):
-        acc2list, acc3list, auclist, numlist = [],[],[],[]
+        models_temp = []
         for c in self.clients:
-            acc2list.append(c.test_acc)
-            acc3list.append(c.test_acc2)
-            auclist.append(c.auc)
-            numlist.append(c.num)
-        test_acc2 = sum(acc2list) * 1.0 / sum(numlist)
-        test_acc3 = sum(acc3list) * 1.0 / sum(numlist)
+            models_temp.append(copy.deepcopy(c.model))
+            c.train_one_step()
 
-        self.rs_test_acc2.append(test_acc2)
-        self.rs_test_acc3.append(test_acc3)
+        self.evaluate()
 
-        print("Averaged Test Accuracy2: {:.4f}".format(test_acc2))
-        print("Averaged Test Accuracy3: {:.4f}".format(test_acc3))
+        # set the local model back on clients for training process
+        for i, c in enumerate(self.clients):
+            c.clone_model(models_temp[i], c.model)
+
 
 
 def proto_aggregation(local_protos_list):

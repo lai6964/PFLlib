@@ -379,6 +379,7 @@ class clientDFCC(Client):
 
         test_acc = 0
         test_acc2 = 0
+        test_acc3 = 0
         test_num = 0
         y_prob = []
         y_true = []
@@ -399,7 +400,8 @@ class clientDFCC(Client):
                 output = torch.nn.functional.softmax(out_g.detach()) + torch.nn.functional.softmax(out_p.detach())
 
                 test_acc += (torch.sum(torch.argmax(out_g, dim=1) == y)).item()
-                test_acc2 += (torch.sum(torch.argmax(output, dim=1) == y)).item()
+                test_acc2 += (torch.sum(torch.argmax(out_p, dim=1) == y)).item()
+                test_acc3 += (torch.sum(torch.argmax(output, dim=1) == y)).item()
                 test_num += y.shape[0]
 
                 y_prob.append(torch.nn.functional.softmax(output).detach().cpu().numpy())
@@ -418,7 +420,7 @@ class clientDFCC(Client):
 
         self.save_local_model()
 
-        return test_acc, test_num, auc, test_acc2
+        return test_acc, test_num, auc, test_acc2, test_acc3
     #
     # def train_metrics(self):
     #     trainloader = self.load_train_data()
@@ -489,7 +491,6 @@ class clientDFCC(Client):
         embedding_spe = rep[:, d // 2:]
         out_g = self.model.head(embedding_inv)
         out_p = self.model.headL(embedding_spe)
-
         loss = self.loss(out_g, y)+self.loss(out_p, y)
         self.optimizer.zero_grad()
         loss.backward()

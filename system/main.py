@@ -112,7 +112,7 @@ def run(args):
             elif "Digit5" in args.dataset:
                 args.model = Digit5CNN().to(args.device)
             else:
-                args.model = FedAvgCNN(in_features=3, num_classes=args.num_classes, dim=10816).to(args.device)
+                args.model = FedAvgCNN(in_features=3, num_classes=args.num_classes, dim=10816, outdim=args.feature_dim).to(args.device)
 
         elif model_str == "DNN": # non-convex
             if "MNIST" in args.dataset:
@@ -389,8 +389,8 @@ def run(args):
             server = FedDFPA(args, i)
 
         elif args.algorithm == 'FedDFCC':
-            args.head = nn.Linear(256, args.num_classes)
-            args.headL = nn.Linear(256, args.num_classes)
+            args.head = nn.Linear(args.feature_dim//2, args.num_classes)
+            args.headL = nn.Linear(args.feature_dim//2, args.num_classes)
             args.model.fc = nn.Identity()
             args.decoder = Decoder(args.feature_dim, device=args.device)
             args.model = BaseMineSplit(args.model, args.head, args.headL, args.decoder).to(args.device)
