@@ -33,6 +33,7 @@ class FedDFCC(Server):
         self.using_aggregate = args.using_aggregate
         self.using_glocla = args.using_glocla
         self.using_normal = args.using_normal
+        self.d = args.feature_dim//2
 
     def train(self):
         for i in range(self.global_rounds + 1):
@@ -43,8 +44,8 @@ class FedDFCC(Server):
             if (i % self.eval_gap == 0) and (i>0):
                 print(f"\n-------------Round number: {i}-------------")
                 print("\nEvaluate personalized models")
-                self.evaluate()
-                # self.evaluate_one_step()
+                # self.evaluate()
+                self.evaluate_one_step()
 
             for client in self.selected_clients:
                 client.train()
@@ -169,15 +170,23 @@ class FedDFCC(Server):
         inv_protos, spe_protos = {}, {}
         inv_vars, spe_vars = {}, {}
         for client in self.selected_clients:
-            protos = client.local_protos
-            protos_vars = client.local_protos_vars
+            protos = client.inv_special_protos
+            protos_vars = client.inv_special_protos_vars
             for key in protos.keys():
-                if key in inv_protos.keys():
-                    inv_protos[key].append(protos[key])
-                    inv_vars[key].append(protos_vars[key])
-                else:
-                    inv_protos[key] = [protos[key]]
-                    inv_vars[key] = [protos_vars[key]]
+                for mean, var in zip(protos[key],protos_vars[key]):
+                    if key in inv_protos.keys():
+                        inv_protos[key].append(mean)
+                        inv_vars[key].append(var)
+                    else:
+                        inv_protos[key] = [mean]
+                        inv_vars[key] = [var]
+
+                # if key in inv_protos.keys():
+                #     inv_protos[key].append(protos[key][:self.d])
+                #     inv_vars[key].append(protos_vars[key][:self.d])
+                # else:
+                #     inv_protos[key] = [protos[key][:self.d]]
+                #     inv_vars[key] = [protos_vars[key][:self.d]]
 
             # protos = client.special_protos
             # for key, proto in protos.items():

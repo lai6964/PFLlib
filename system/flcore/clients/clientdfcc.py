@@ -48,9 +48,9 @@ def get_special_protos(protos_in):
     # 捷径特征只取后半段聚类，前半段要置0，否则影响聚类中心
     protos_meas, protos_vars = {}, {}
     for key, proto_list in agg_protos_label.items():
-        d = proto_list[0].size(0)
-        for proto in proto_list:
-            proto[:d // 2] = 0
+        # d = proto_list[0].size(0)
+        # for proto in proto_list:
+        #     proto[:d // 2] = 0
 
         if len(proto_list) > 1:
             proto_list = [item.squeeze(0).detach().cpu().numpy().reshape(-1) for item in proto_list]
@@ -244,7 +244,7 @@ class clientDFCC(Client):
         self.protos = agg_func(protos)
         # print("len(self.protos):",len(self.protos))
         self.local_protos, self.local_protos_vars = get_protos_meanvar(protos_inv)
-        # self.special_protos, self.special_protos_vars = get_special_protos(protos_spe)
+        self.inv_special_protos, self.inv_special_protos_vars = get_special_protos(protos)
         self.special_protos, self.special_protos_vars = get_protos_meanvar(protos_spe)
         # print("len(self.protos):",len(self.protos))
 
@@ -397,7 +397,7 @@ class clientDFCC(Client):
                 embedding_spe = rep[:, d // 2:]
                 out_g = self.model.head(embedding_inv)
                 out_p = self.model.headL(embedding_spe)
-                output = torch.nn.functional.softmax(out_g.detach()) + torch.nn.functional.softmax(out_p.detach())
+                output = (out_g+out_p)*0.5
 
                 test_acc += (torch.sum(torch.argmax(out_g, dim=1) == y)).item()
                 test_acc2 += (torch.sum(torch.argmax(out_p, dim=1) == y)).item()
