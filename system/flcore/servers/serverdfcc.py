@@ -175,11 +175,11 @@ class FedDFCC(Server):
             for key in protos.keys():
                 for mean, var in zip(protos[key],protos_vars[key]):
                     if key in inv_protos.keys():
-                        inv_protos[key].append(mean)
-                        inv_vars[key].append(var)
+                        inv_protos[key].append(mean[:self.d])
+                        inv_vars[key].append(var[:self.d])
                     else:
-                        inv_protos[key] = [mean]
-                        inv_vars[key] = [var]
+                        inv_protos[key] = [mean[:self.d]]
+                        inv_vars[key] = [var[:self.d]]
 
                 # if key in inv_protos.keys():
                 #     inv_protos[key].append(protos[key][:self.d])

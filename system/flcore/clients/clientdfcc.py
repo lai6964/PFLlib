@@ -75,8 +75,8 @@ def get_special_protos(protos_in):
                 proto = np.mean(selected_proto_list, axis=0, keepdims=True)
                 proto_var = np.var(selected_proto_list, axis=0, keepdims=True)
 
-                agg_selected_proto.append(torch.tensor(proto))
-                agg_selected_proto_var.append(torch.tensor(proto_var))
+                agg_selected_proto.append(torch.tensor(proto[0]))
+                agg_selected_proto_var.append(torch.tensor(proto_var[0]))
             protos_meas[key] = agg_selected_proto
             protos_vars[key] = agg_selected_proto_var
         else:
