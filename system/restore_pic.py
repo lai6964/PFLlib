@@ -113,7 +113,12 @@ def plot_mine(images, respic, resimg):
         restored_img = recover_image(resimg[i])
         ax[i, 2].imshow(restored_img)
         ax[i, 2].axis('off')
+    plt.savefig(f"tmp.pdf",
+                bbox_inches='tight',  # 关键：让 savefig 计算紧凑边界
+                pad_inches=0)  # 可选：不留额外边距（默认 0.1）
     plt.show()
+
+
 if __name__ == '__main__':
 
     device =torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
