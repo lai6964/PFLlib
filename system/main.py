@@ -402,6 +402,13 @@ def run(args):
             args.decoder = Decoder(args.feature_dim, device=args.device)
             args.model = BaseMineSplit(args.model, args.head, args.headL, args.decoder).to(args.device)
             server = FedDFGC(args, i)
+
+        elif args.algorithm == "FedSimP":
+            from flcore.servers.serversimp import FedSimP
+            args.head = copy.deepcopy(args.model.fc)
+            args.model.fc = nn.Identity()
+            args.model = BaseHeadSplit(args.model, args.head)
+            server = FedSimP(args, i)
         else:
             raise NotImplementedError("{}".format(args.algorithm))
 
@@ -443,7 +450,7 @@ if __name__ == "__main__":
     parser.add_argument('-data', "--dataset", type=str, default="Cifar100")
     parser.add_argument('-ncl', "--num_classes", type=int, default=100)
     parser.add_argument('-m', "--model", type=str, default="CNN")
-    parser.add_argument('-lbs', "--batch_size", type=int, default=10)
+    parser.add_argument('-lbs', "--batch_size", type=int, default=64)
     parser.add_argument('-lr', "--local_learning_rate", type=float, default=0.005,
                         help="Local learning rate")
     parser.add_argument('-ld', "--learning_rate_decay", type=bool, default=False)
@@ -464,7 +471,7 @@ if __name__ == "__main__":
                         help="Previous Running times")
     parser.add_argument('-t', "--times", type=int, default=1,
                         help="Running times")
-    parser.add_argument('-eg', "--eval_gap", type=int, default=10,
+    parser.add_argument('-eg', "--eval_gap", type=int, default=1,
                         help="Rounds gap for evaluation")
     parser.add_argument('-sfn', "--save_folder_name", type=str, default='items')
     parser.add_argument('-ab', "--auto_break", type=bool, default=False)

@@ -49,7 +49,9 @@ class DomainNet(Dataset):
 
 def get_domainnet_dloader(dataset_path, domain_name):
     train_data_paths, train_data_labels = read_domainnet_data(dataset_path, domain_name, split="train")
+    print("read train data")
     test_data_paths, test_data_labels = read_domainnet_data(dataset_path, domain_name, split="test")
+    print("read test data")
     transforms_train = transforms.Compose([
         transforms.RandomResizedCrop(64, scale=(0.75, 1)),
         transforms.RandomHorizontalFlip(),
@@ -107,9 +109,10 @@ def generate_dataset(dir_path):
             os.system(f'unzip {root}/{d}.zip -d {root}')
             os.system(f'wget {http_head}domainnet/txt/{d}_train.txt -P {root}/splits')
             os.system(f'wget {http_head}domainnet/txt/{d}_test.txt -P {root}/splits')
-
+    print("begin")
     X, y = [], []
     for d in domains:
+        print(d)
         train_loader, test_loader = get_domainnet_dloader(root, d)
 
         for _, tt in enumerate(train_loader):
@@ -127,6 +130,7 @@ def generate_dataset(dir_path):
 
         X.append(np.array(dataset_image))
         y.append(np.array(dataset_label))
+        print(d)
 
     labelss = []
     for yy in y:
@@ -147,8 +151,10 @@ def generate_dataset(dir_path):
 
     train_data, test_data = split_data(X, y)
     # modify the code in YOUR_ENV/lib/python3.8/site-packages/numpy/lib Line #678 from protocol=3 to protocol=4
-    save_file(config_path, train_path, test_path, train_data, test_data, num_clients, max(labelss), 
-        statistic, None, None, None)
+    # save_file(config_path, train_path, test_path, train_data, test_data, num_clients, max(labelss),
+    #     statistic, None, None, None)
+    save_file(config_path, train_path, test_path, train_data, test_data, num_clients, max(labelss),
+        statistic, True, False, "dir")
 
 
 if __name__ == "__main__":
