@@ -1,6 +1,8 @@
+import copy
 import random
+import torch
 import time
-from flcore.clients.clientsimp import clientSimP
+from clientsimp import clientSimP
 from flcore.servers.serverbase import Server
 from collections import defaultdict
 import sys
@@ -106,6 +108,15 @@ class FedSimP(Server):
         for i, w in enumerate(self.uploaded_weights):
             self.uploaded_weights[i] = w / tot_samples
 
+    def aggregate_parameters(self):
+        assert (len(self.uploaded_models) > 0)
+
+        self.global_modules = copy.deepcopy(self.uploaded_models[0])
+        for param in self.global_modules.parameters():
+            param.data = torch.zeros_like(param.data)
+
+        for w, client_model in zip(self.uploaded_weights, self.uploaded_models):
+            self.add_parameters(w, client_model)
 
 def proto_aggregation(local_protos_list):
     agg_protos = defaultdict(list)

@@ -1,4 +1,5 @@
 import torch
+import copy
 import numpy as np
 import time
 from flcore.clients.clientbase import Client
@@ -22,6 +23,12 @@ class clientSimP(Client):
         self.plocal_epochs = args.plocal_epochs
         self.hard_thread = 0.5
         self.using_true_samples_only = True
+
+
+        self.protos = None
+        self.global_protos = None
+        self.loss_mse = torch.nn.MSELoss()
+        self.lamda = args.lamda
 
     def train(self):
         trainloader = self.load_train_data()
@@ -53,6 +60,14 @@ class clientSimP(Client):
                 rep = self.model.base(x)
                 output = self.model.head(rep)
                 loss = self.loss(output, y)
+
+                if self.global_protos is not None:
+                    proto_new = copy.deepcopy(rep.detach())
+                    for i, yy in enumerate(y):
+                        y_c = yy.item()
+                        if type(self.global_protos[y_c]) != type([]):
+                            proto_new[i, :] = self.global_protos[y_c].data
+                    loss += self.loss_mse(proto_new, rep) * self.lamda
 
                 # 计算预测概率和预测类别
                 with torch.no_grad():

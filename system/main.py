@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 import copy
-import torch
 import argparse
 import os
 import time
@@ -404,7 +403,7 @@ def run(args):
             server = FedDFGC(args, i)
 
         elif args.algorithm == "FedSimP":
-            from flcore.servers.serversimp import FedSimP
+            from serversimp import FedSimP
             # args.head = copy.deepcopy(args.model.fc)
             in_dim = args.feature_dim
             args.head = nn.Sequential(
