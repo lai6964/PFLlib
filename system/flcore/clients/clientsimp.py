@@ -82,7 +82,8 @@ class clientSimP(Client):
                 self.optimizer.step()
         # self.model.cpu()
 
-        self.protos = cluster_protos_by_Truepredict(protos)
+        self.protos = cluster_protos_by_Truepredict(protos, self.using_true_samples_only)
+        # self.err_protos = cluster_error_protos_by_prediction(protos)
 
         if self.learning_rate_decay:
             self.learning_rate_scheduler.step()
@@ -95,9 +96,12 @@ class clientSimP(Client):
         for new_param, old_param in zip(base.parameters(), self.model.base.parameters()):
             old_param.data = new_param.data.clone()
 
+    def set_protos(self, global_protos):
+        self.global_protos = global_protos
+
 
 def cluster_protos_by_Truepredict(protos_list, using_true_samples_only=True):
-    """按照真实类别中的预测类别分别聚类"""
+    """按照真实类别中的正确预测聚类"""
     protos = defaultdict(list)
     probs = defaultdict(list)
     for y_c, dict_list in protos_list.items():
@@ -108,64 +112,266 @@ def cluster_protos_by_Truepredict(protos_list, using_true_samples_only=True):
             protos[y_c].append(items['feature'])
             probs[y_c].append(items['true_class_prob'])
 
+    weighted_prototypes = {} # 存储结果
+    for y_c in protos.keys():
+        feature_list = protos[y_c]
+        prob_list = probs[y_c]
+        # 将特征列表和概率列表转换为张量,计算加权平均原型: sum(proto * prob) / sum(prob)
+        features_tensor = torch.stack(feature_list)  # [n_samples, feature_dim]
+        probs_tensor = torch.tensor(prob_list, device=features_tensor.device)  # [n_samples]
+        probs_expanded = probs_tensor.unsqueeze(1).expand_as(features_tensor)  # [n_samples, feature_dim]
+        # 计算加权特征和
+        weighted_features_sum = torch.sum(features_tensor * probs_expanded, dim=0)  # [feature_dim]
+        total_prob = torch.sum(probs_tensor)  # 标量
+        weighted_proto = weighted_features_sum / (total_prob + 1e-8)  # [feature_dim] 计算加权平均原型
+        weighted_prototypes[y_c] = weighted_proto
+
+    return weighted_prototypes
 
 
-def enhanced_agg_func(protos_dict):
-    """增强的聚合函数，处理包含预测信息的原型"""
-    aggregated_protos = {}
 
-    for class_id, samples in protos_dict.items():
-        if len(samples) == 0:
-            continue
+def cluster_error_protos_by_prediction(protos_list):
+    """对每个真实类别中的错误分类样本，按照错误预测的类别分别聚类得到均值和方差
 
-        # 提取特征和各种概率
-        features = [sample['feature'] for sample in samples]
-        true_probs = [sample['true_class_prob'] for sample in samples]
-        pred_probs = [sample['pred_class_prob'] for sample in samples]
-        is_correct = [sample['is_correct'] for sample in samples]
-        pred_classes = [sample['pred_class'] for sample in samples]
+    Args:
+        protos_list: 包含样本信息的字典，结构为 {真实类别: [样本信息列表]}
 
-        # 转换为张量
-        features_tensor = torch.stack(features)
-        true_probs_tensor = torch.tensor(true_probs, device=features_tensor.device).unsqueeze(1)
-        pred_probs_tensor = torch.tensor(pred_probs, device=features_tensor.device).unsqueeze(1)
+    Returns:
+        error_clusters: 嵌套字典，结构为 {真实类别: {预测类别: {'mean': 均值, 'variance': 方差, 'count': 样本数}}}
+        error_analysis: 错误聚类分析结果
+    """
+    # 初始化错误聚类字典
+    error_clusters = {}
 
-        # 方法1：使用真实类别概率加权的原型
-        weighted_by_true_prob = features_tensor * true_probs_tensor
-        proto_weighted_by_true = torch.sum(weighted_by_true_prob, dim=0) / (torch.sum(true_probs_tensor) + 1e-8)
+    # 遍历每个真实类别
+    for true_class, dict_list in protos_list.items():
+        # 初始化该真实类别的错误预测字典
+        pred_clusters = {}
 
-        # 方法2：只使用正确分类的样本计算原型
-        correct_features = [sample['feature'] for sample in samples if sample['is_correct']]
-        if len(correct_features) > 0:
-            correct_features_tensor = torch.stack(correct_features)
-            proto_correct_only = torch.mean(correct_features_tensor, dim=0)
-        else:
-            proto_correct_only = proto_weighted_by_true  # 如果没有正确分类的样本，回退
+        # 遍历该真实类别的所有样本
+        for item in dict_list:
+            # 只处理错误分类的样本
+            if not item['is_correct']:
+                pred_class = item['pred_class']
 
-        # 统计信息
-        accuracy = sum(is_correct) / len(samples)
-        mean_true_prob = torch.mean(true_probs_tensor).item()
-        mean_pred_prob = torch.mean(pred_probs_tensor).item()
+                # 如果该预测类别还未创建，则初始化
+                if pred_class not in pred_clusters:
+                    pred_clusters[pred_class] = {
+                        'features': [],
+                        'true_probs': [],
+                        'pred_probs': []
+                    }
 
-        # 预测类别分布
-        pred_class_dist = {}
-        for pred_c in pred_classes:
-            pred_class_dist[pred_c] = pred_class_dist.get(pred_c, 0) + 1
+                # 添加特征和概率信息
+                pred_clusters[pred_class]['features'].append(item['feature'])
+                pred_clusters[pred_class]['true_probs'].append(item['true_class_prob'])
+                pred_clusters[pred_class]['pred_probs'].append(item['pred_class_prob'])
 
-        # 存储所有信息
-        class_info = {
-            'proto_weighted_by_true': proto_weighted_by_true,  # 真实概率加权的原型
-            'proto_correct_only': proto_correct_only,  # 仅正确分类样本的原型
-            'accuracy': accuracy,  # 该类别的准确率
-            'mean_true_prob': mean_true_prob,  # 平均真实类别概率
-            'mean_pred_prob': mean_pred_prob,  # 平均预测类别概率
-            'sample_count': len(samples),  # 样本数量
-            'correct_count': sum(is_correct),  # 正确分类数量
-            'pred_class_distribution': pred_class_dist,  # 预测类别分布
-            'confidence': mean_pred_prob,  # 置信度
-            'all_samples': samples  # 可选：保留所有样本信息用于进一步分析
+        # 计算每个预测类别的均值和方差
+        true_class_errors = {}
+        for pred_class, cluster_data in pred_clusters.items():
+            if len(cluster_data['features']) > 0:
+                # 转换为张量
+                features_tensor = torch.stack(cluster_data['features'])
+
+                # 计算均值
+                mean_features = torch.mean(features_tensor, dim=0)
+
+                # 计算方差（沿每个特征维度）
+                variance_features = torch.var(features_tensor, dim=0, unbiased=False)
+
+                # 计算概率统计
+                avg_true_prob = torch.mean(torch.tensor(cluster_data['true_probs']))
+                avg_pred_prob = torch.mean(torch.tensor(cluster_data['pred_probs']))
+
+                # 存储结果
+                true_class_errors[pred_class] = {
+                    'mean': mean_features,
+                    'variance': variance_features,
+                    'count': len(cluster_data['features']),
+                    'avg_true_prob': avg_true_prob.item(),
+                    'avg_pred_prob': avg_pred_prob.item(),
+                    # 'features': features_tensor  # 保留原始特征用于进一步分析
+                }
+
+        # 只有当该真实类别有错误分类时才添加到结果中
+        if true_class_errors:
+            error_clusters[true_class] = true_class_errors
+
+    return error_clusters
+
+
+def analyze_error_clusters(error_clusters):
+    """分析错误聚类结果"""
+    analysis = {
+        'total_true_classes': len(error_clusters),
+        'total_error_patterns': 0,
+        'most_confused_classes': [],
+        'error_statistics': {},
+        'confusion_matrix': {}
+    }
+
+    # 构建混淆矩阵
+    confusion_matrix = {}
+    for true_class, pred_classes in error_clusters.items():
+        confusion_matrix[true_class] = {}
+        for pred_class, cluster_info in pred_classes.items():
+            confusion_matrix[true_class][pred_class] = cluster_info['count']
+            analysis['total_error_patterns'] += 1
+
+    analysis['confusion_matrix'] = confusion_matrix
+
+    # 分析每个真实类别的错误模式
+    for true_class, pred_classes in error_clusters.items():
+        class_stats = {
+            'total_errors': sum(cluster['count'] for cluster in pred_classes.values()),
+            'error_patterns': len(pred_classes),
+            'main_confusions': [],
+            'avg_confidence_on_true': 0,
+            'avg_confidence_on_pred': 0
         }
 
-        aggregated_protos[class_id] = class_info
+        # 计算平均置信度
+        if pred_classes:
+            class_stats['avg_confidence_on_true'] = np.mean([
+                cluster['avg_true_prob'] for cluster in pred_classes.values()
+            ])
+            class_stats['avg_confidence_on_pred'] = np.mean([
+                cluster['avg_pred_prob'] for cluster in pred_classes.values()
+            ])
 
-    return aggregated_protos
+        # 找出主要的混淆模式（按样本数量排序）
+        confusion_list = []
+        for pred_class, cluster_info in pred_classes.items():
+            confusion_list.append({
+                'pred_class': pred_class,
+                'count': cluster_info['count'],
+                'avg_true_prob': cluster_info['avg_true_prob'],
+                'avg_pred_prob': cluster_info['avg_pred_prob']
+            })
+
+        confusion_list.sort(key=lambda x: x['count'], reverse=True)
+        class_stats['main_confusions'] = confusion_list[:3]  # 取前3个主要混淆
+
+        analysis['error_statistics'][true_class] = class_stats
+
+    # 找出最常被混淆的类别对
+    confusion_pairs = []
+    for true_class, pred_classes in error_clusters.items():
+        for pred_class, cluster_info in pred_classes.items():
+            confusion_pairs.append({
+                'true_class': true_class,
+                'pred_class': pred_class,
+                'count': cluster_info['count'],
+                'confidence_diff': cluster_info['avg_pred_prob'] - cluster_info['avg_true_prob']
+            })
+
+    confusion_pairs.sort(key=lambda x: x['count'], reverse=True)
+    analysis['most_confused_classes'] = confusion_pairs[:10]  # 取前10个最常混淆的类别对
+
+    return analysis
+
+def visualize_error_clusters(error_analysis):
+    """可视化错误聚类结果"""
+    print("=" * 80)
+    print("错误分类聚类分析报告")
+    print("=" * 80)
+
+    print(f"总共有 {error_analysis['total_true_classes']} 个真实类别存在错误分类")
+    print(f"共发现 {error_analysis['total_error_patterns']} 种错误模式")
+
+    # 打印每个类别的错误分析
+    for true_class, stats in error_analysis['error_statistics'].items():
+        print(f"\n真实类别 {true_class}:")
+        print(f"  总错误数: {stats['total_errors']}")
+        print(f"  错误模式数: {stats['error_patterns']}")
+        print(f"  平均真实类别置信度: {stats['avg_confidence_on_true']:.3f}")
+        print(f"  平均预测类别置信度: {stats['avg_confidence_on_pred']:.3f}")
+
+        if stats['main_confusions']:
+            print("  主要混淆模式:")
+            for confusion in stats['main_confusions']:
+                print(f"    → 预测为类别 {confusion['pred_class']}: {confusion['count']} 个样本 "
+                      f"(真实概率: {confusion['avg_true_prob']:.3f}, 预测概率: {confusion['avg_pred_prob']:.3f})")
+
+    # 打印最常混淆的类别对
+    if error_analysis['most_confused_classes']:
+        print(f"\n最常混淆的类别对 (前10):")
+        for i, pair in enumerate(error_analysis['most_confused_classes']):
+            confidence_diff = f"{pair['confidence_diff']:+.3f}"
+            print(f"  {i + 1}. {pair['true_class']} → {pair['pred_class']}: {pair['count']} 次 "
+                  f"(置信度差异: {confidence_diff})")
+
+def calculate_cluster_quality_metrics(error_clusters):
+    """计算错误聚类的质量指标"""
+    quality_metrics = {
+        'total_clusters': 0,
+        'avg_samples_per_cluster': 0,
+        'cluster_size_std': 0,
+        'high_variance_clusters': [],
+        'low_variance_clusters': [],
+        'cluster_quality_scores': {}
+    }
+
+    all_cluster_sizes = []
+    all_variances = []
+
+    for true_class, pred_classes in error_clusters.items():
+        for pred_class, cluster_info in pred_classes.items():
+            quality_metrics['total_clusters'] += 1
+            cluster_size = cluster_info['count']
+            all_cluster_sizes.append(cluster_size)
+
+            # 计算平均方差（所有特征维度的平均值）
+            avg_variance = torch.mean(cluster_info['variance']).item()
+            all_variances.append(avg_variance)
+
+            # 识别高方差和低方差聚类
+            cluster_id = f"{true_class}→{pred_class}"
+            if avg_variance > 0.1:  # 阈值可根据实际情况调整
+                quality_metrics['high_variance_clusters'].append(cluster_id)
+            elif avg_variance < 0.01:
+                quality_metrics['low_variance_clusters'].append(cluster_id)
+
+            # 计算聚类质量评分（综合考虑样本数量和方差）
+            # 样本数量越多、方差越小，质量越高
+            size_score = min(cluster_size / 10, 1.0)  # 样本数量评分，最多10个样本得满分
+            variance_score = max(0, 1 - avg_variance * 10)  # 方差评分，方差越小得分越高
+
+            quality_score = size_score * 0.6 + variance_score * 0.4
+            quality_metrics['cluster_quality_scores'][cluster_id] = {
+                'score': quality_score,
+                'size': cluster_size,
+                'variance': avg_variance,
+                'size_score': size_score,
+                'variance_score': variance_score
+            }
+
+    # 计算总体统计
+    if all_cluster_sizes:
+        quality_metrics['avg_samples_per_cluster'] = np.mean(all_cluster_sizes)
+        quality_metrics['cluster_size_std'] = np.std(all_cluster_sizes)
+
+    return quality_metrics
+
+def complete_error_cluster_analysis(protos_list):
+    """完整的错误聚类分析流程"""
+    print("开始错误分类聚类分析...")
+
+    # 1. 聚类错误样本
+    error_clusters = cluster_error_protos_by_prediction(protos_list)
+
+    error_analysis = calculate_cluster_quality_metrics(error_clusters)
+
+    # 2. 可视化结果
+    visualize_error_clusters(error_clusters, error_analysis)
+
+    # 3. 计算质量指标
+    quality_metrics = calculate_cluster_quality_metrics(error_clusters)
+
+    print(f"\n聚类质量指标:")
+    print(f"  总聚类数: {quality_metrics['total_clusters']}")
+    print(
+        f"  平均每聚类样本数: {quality_metrics['avg_samples_per_cluster']:.2f} ± {quality_metrics['cluster_size_std']:.2f}")
+    print(f"  高方差聚类: {len(quality_metrics['high_variance_clusters'])}")
+    print(f"  低方差聚类: {len(quality_metrics['low_variance_clusters'])}")

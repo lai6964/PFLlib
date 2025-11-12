@@ -405,7 +405,15 @@ def run(args):
 
         elif args.algorithm == "FedSimP":
             from flcore.servers.serversimp import FedSimP
-            args.head = copy.deepcopy(args.model.fc)
+            # args.head = copy.deepcopy(args.model.fc)
+            in_dim = args.feature_dim
+            args.head = nn.Sequential(
+                nn.Linear(in_dim, in_dim * 2),
+                nn.LayerNorm([in_dim * 2]),
+                nn.ReLU(),
+                nn.Linear(in_dim * 2, args.feature_dim),
+                nn.Linear(args.feature_dim, args.num_classes),
+            )
             args.model.fc = nn.Identity()
             args.model = BaseHeadSplit(args.model, args.head)
             server = FedSimP(args, i)
@@ -447,20 +455,20 @@ if __name__ == "__main__":
     parser.add_argument('-dev', "--device", type=str, default="cuda",
                         choices=["cpu", "cuda"])
     parser.add_argument('-did', "--device_id", type=str, default="0")
-    parser.add_argument('-data', "--dataset", type=str, default="Cifar100")
-    parser.add_argument('-ncl', "--num_classes", type=int, default=100)
+    parser.add_argument('-data', "--dataset", type=str, default="Cifar10_2")
+    parser.add_argument('-ncl', "--num_classes", type=int, default=10)
     parser.add_argument('-m', "--model", type=str, default="CNN")
     parser.add_argument('-lbs', "--batch_size", type=int, default=64)
     parser.add_argument('-lr', "--local_learning_rate", type=float, default=0.005,
                         help="Local learning rate")
     parser.add_argument('-ld', "--learning_rate_decay", type=bool, default=False)
     parser.add_argument('-ldg', "--learning_rate_decay_gamma", type=float, default=0.99)
-    parser.add_argument('-gr', "--global_rounds", type=int, default=41)
+    parser.add_argument('-gr', "--global_rounds", type=int, default=101)
     parser.add_argument('-tc', "--top_cnt", type=int, default=100, 
                         help="For auto_break")
     parser.add_argument('-ls', "--local_epochs", type=int, default=5,
                         help="Multiple update steps in one local epoch.")
-    parser.add_argument('-algo', "--algorithm", type=str, default="FedDFCC")
+    parser.add_argument('-algo', "--algorithm", type=str, default="FedSimP")
     parser.add_argument('-jr', "--join_ratio", type=float, default=1.0,
                         help="Ratio of clients per round")
     parser.add_argument('-rjr', "--random_join_ratio", type=bool, default=False,

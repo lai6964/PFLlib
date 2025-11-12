@@ -9,7 +9,7 @@ from PIL import Image
 
 batch_size = 10
 train_ratio = 0.75 # merge original training set and test set, then split it manually. 
-alpha = 0.3 # for Dirichlet distribution. 100 for exdir
+alpha = 0.01 # for Dirichlet distribution. 100 for exdir
 
 def check(config_path, train_path, test_path, num_clients, niid=False, 
         balance=True, partition=None):
@@ -43,7 +43,7 @@ def separate_data(data, num_clients, num_classes, niid=False, balance=False, par
     dataset_content, dataset_label = data
     # guarantee that each client must have at least one batch of data for testing. 
     least_samples = int(min(batch_size / (1-train_ratio), len(dataset_label) / num_clients / 2))
-
+    # least_samples = 10
     dataidx_map = {}
 
     if not niid:
@@ -92,6 +92,7 @@ def separate_data(data, num_clients, num_classes, niid=False, balance=False, par
 
         try_cnt = 1
         while min_size < least_samples:
+        # if min_size < least_samples:
             if try_cnt > 1:
                 print(f'Client data size does not meet the minimum requirement {least_samples}. Try allocating again for the {try_cnt}-th time.')
 

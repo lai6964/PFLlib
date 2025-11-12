@@ -2,7 +2,7 @@ import random
 import time
 from flcore.clients.clientsimp import clientSimP
 from flcore.servers.serverbase import Server
-from threading import Thread
+from collections import defaultdict
 import sys
 
 
@@ -19,6 +19,8 @@ class FedSimP(Server):
 
         # self.load_model()
         self.Budget = []
+        self.num_classes = args.num_classes
+        self.global_protos = [None for _ in range(args.num_classes)]
 
     def train(self):
         for i in range(self.global_rounds + 1):
@@ -35,15 +37,13 @@ class FedSimP(Server):
             for client in self.selected_clients:
                 client.train()
 
-            # threads = [Thread(target=client.train)
-            #            for client in self.selected_clients]
-            # [t.start() for t in threads]
-            # [t.join() for t in threads]
+            self.receive_protos()
+            self.global_protos = proto_aggregation(self.uploaded_protos)
+            self.send_protos()
 
             self.receive_models()
-            if self.dlg_eval and i % self.dlg_gap == 0:
-                self.call_dlg(i)
             self.aggregate_parameters()
+
 
             self.Budget.append(time.time() - s_t)
             print('-' * 25, 'time cost', '-' * 25, self.Budget[-1])
@@ -67,6 +67,26 @@ class FedSimP(Server):
             print("\nEvaluate new clients")
             self.evaluate()
 
+    def send_protos(self):
+        assert (len(self.clients) > 0)
+
+        for client in self.clients:
+            start_time = time.time()
+
+            client.set_protos(self.global_protos)
+
+            client.send_time_cost['num_rounds'] += 1
+            client.send_time_cost['total_cost'] += 2 * (time.time() - start_time)
+
+    def receive_protos(self):
+        assert (len(self.selected_clients) > 0)
+
+        self.uploaded_ids = []
+        self.uploaded_protos = []
+        for client in self.selected_clients:
+            self.uploaded_ids.append(client.id)
+            self.uploaded_protos.append(client.protos)
+
     def receive_models(self):
         assert (len(self.selected_clients) > 0)
 
@@ -85,3 +105,21 @@ class FedSimP(Server):
                 self.uploaded_models.append(client.model.base)
         for i, w in enumerate(self.uploaded_weights):
             self.uploaded_weights[i] = w / tot_samples
+
+
+def proto_aggregation(local_protos_list):
+    agg_protos = defaultdict(list)
+    for local_protos in local_protos_list:
+        for label in local_protos.keys():
+            agg_protos[label].append(local_protos[label])
+
+    for [label, proto_list] in agg_protos.items():
+        if len(proto_list) > 1:
+            proto = 0 * proto_list[0].data
+            for i in proto_list:
+                proto += i.data
+            agg_protos[label] = proto / len(proto_list)
+        else:
+            agg_protos[label] = proto_list[0].data
+
+    return agg_protos
