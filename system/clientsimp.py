@@ -42,10 +42,10 @@ class clientSimP(Client):
         if self.train_slow:
             max_local_epochs = np.random.randint(1, max_local_epochs // 2)
 
-        for param in self.model.base.parameters():
-            param.requires_grad = True
-        for param in self.model.head.parameters():
-            param.requires_grad = False
+        # for param in self.model.base.parameters():
+        #     param.requires_grad = True
+        # for param in self.model.head.parameters():
+        #     param.requires_grad = False
 
         protos = defaultdict(list)
         for epoch in range(max_local_epochs):
@@ -107,12 +107,79 @@ class clientSimP(Client):
         self.train_time_cost['num_rounds'] += 1
         self.train_time_cost['total_cost'] += time.time() - start_time
 
-    def set_parameters(self, base):
-        for new_param, old_param in zip(base.parameters(), self.model.base.parameters()):
+    def set_parameters(self, model):
+        for new_param, old_param in zip(model.base.parameters(), self.model.base.parameters()):
             old_param.data = new_param.data.clone()
 
     def set_protos(self, global_protos):
         self.global_protos = global_protos
+
+    # def test_metrics(self):
+    #     testloaderfull = self.load_test_data()
+    #     # self.model = self.load_model('model')
+    #     # self.model.to(self.device)
+    #     self.model.eval()
+    #
+    #     test_acc = 0
+    #     test_num = 0
+    #
+    #     if self.global_protos is not None:
+    #         with torch.no_grad():
+    #             for x, y in testloaderfull:
+    #                 if type(x) == type([]):
+    #                     x[0] = x[0].to(self.device)
+    #                 else:
+    #                     x = x.to(self.device)
+    #                 y = y.to(self.device)
+    #                 rep = self.model.base(x)
+    #
+    #                 output = float('inf') * torch.ones(y.shape[0], self.num_classes).to(self.device)
+    #                 for i, r in enumerate(rep):
+    #                     for j, pro in self.global_protos.items():
+    #                         if type(pro) != type([]):
+    #                             output[i, j] = self.loss_mse(r, pro)
+    #
+    #                 test_acc += (torch.sum(torch.argmin(output, dim=1) == y)).item()
+    #                 test_num += y.shape[0]
+    #
+    #         # self.save_local_model()
+    #         return test_acc, test_num, 0
+    #     else:
+    #         return 0, 1e-5, 0
+    #
+    # def train_metrics(self):
+    #     trainloader = self.load_train_data()
+    #     # self.model = self.load_model('model')
+    #     self.model.to(self.device)
+    #     self.model.eval()
+    #
+    #     train_num = 0
+    #     losses = 0
+    #     with torch.no_grad():
+    #         for x, y in trainloader:
+    #             if type(x) == type([]):
+    #                 x[0] = x[0].to(self.device)
+    #             else:
+    #                 x = x.to(self.device)
+    #             y = y.to(self.device)
+    #             rep = self.model.base(x)
+    #             output = self.model.head(rep)
+    #             loss = self.loss(output, y)
+    #
+    #             if self.global_protos is not None:
+    #                 proto_new = copy.deepcopy(rep.detach())
+    #                 for i, yy in enumerate(y):
+    #                     y_c = yy.item()
+    #                     if type(self.global_protos[y_c]) != type([]):
+    #                         proto_new[i, :] = self.global_protos[y_c].data
+    #                 loss += self.loss_mse(proto_new, rep) * self.lamda
+    #             train_num += y.shape[0]
+    #             losses += loss.item() * y.shape[0]
+    #
+    #     # self.model.cpu()
+    #     # self.save_model(self.model, 'model')
+    #
+    #     return losses, train_num
 
 
 def cluster_protos_by_Truepredict(protos_list, using_true_samples_only=True):

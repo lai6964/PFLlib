@@ -404,15 +404,15 @@ def run(args):
 
         elif args.algorithm == "FedSimP":
             from serversimp import FedSimP
-            # args.head = copy.deepcopy(args.model.fc)
-            in_dim = args.feature_dim
-            args.head = nn.Sequential(
-                nn.Linear(in_dim, in_dim * 2),
-                nn.LayerNorm([in_dim * 2]),
-                nn.ReLU(),
-                nn.Linear(in_dim * 2, args.feature_dim),
-                nn.Linear(args.feature_dim, args.num_classes),
-            )
+            args.head = copy.deepcopy(args.model.fc)
+            # in_dim = args.feature_dim
+            # args.head = nn.Sequential(
+            #     nn.Linear(in_dim, in_dim * 2),
+            #     nn.LayerNorm([in_dim * 2]),
+            #     nn.ReLU(),
+            #     nn.Linear(in_dim * 2, args.feature_dim),
+            #     nn.Linear(args.feature_dim, args.num_classes),
+            # )
             args.model.fc = nn.Identity()
             args.model = BaseHeadSplit(args.model, args.head)
             server = FedSimP(args, i)

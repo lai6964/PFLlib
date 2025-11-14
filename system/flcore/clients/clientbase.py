@@ -115,7 +115,11 @@ class Client(object):
         y_prob = np.concatenate(y_prob, axis=0)
         y_true = np.concatenate(y_true, axis=0)
 
-        auc = metrics.roc_auc_score(y_true, y_prob, average='micro')
+        try:
+            auc = metrics.roc_auc_score(y_true, y_prob, average='micro')
+        except:
+            print("auc is error by y_prob is nan, then set it 0 to continue")
+            auc = 0
         
         return test_acc, test_num, auc
 
