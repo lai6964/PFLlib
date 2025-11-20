@@ -19,23 +19,36 @@ class BaseHeadSplit(nn.Module):
 
         return out
 
-
 class BaseMineSplit(nn.Module):
-    def __init__(self, base, head, headL, decoder):
+    def __init__(self, base, head_p, head_g):
         super(BaseMineSplit, self).__init__()
 
         self.base = base
-        self.head = head
-        self.headL = headL
-        self.decoder = decoder
+        self.head_p = head_p
+        self.head_g = head_g
 
     def forward(self, x):
         out = self.base(x)
-        outG = self.head(out)
-        outL = self.headL(out)
-        outP = self.decoder(out)
+        out_p = self.head_p(out)
+        out_g = self.head_g(out)
 
-        return out, outG, outL, outP
+        return out, out_p, out_g
+# class BaseMineSplit(nn.Module):
+#     def __init__(self, base, head, headL, decoder):
+#         super(BaseMineSplit, self).__init__()
+#
+#         self.base = base
+#         self.head = head
+#         self.headL = headL
+#         self.decoder = decoder
+#
+#     def forward(self, x):
+#         out = self.base(x)
+#         outG = self.head(out)
+#         outL = self.headL(out)
+#         outP = self.decoder(out)
+#
+#         return out, outG, outL, outP
 
 class Decoder(nn.Module):
     def __init__(self, embedding_dim: int=512, image_channels: int = 3, image_size: int = 32, device = 'cpu'):

@@ -404,17 +404,18 @@ def run(args):
 
         elif args.algorithm == "FedSimP":
             from serversimp import FedSimP
-            args.head = copy.deepcopy(args.model.fc)
-            # in_dim = args.feature_dim
-            # args.head = nn.Sequential(
-            #     nn.Linear(in_dim, in_dim * 2),
-            #     nn.LayerNorm([in_dim * 2]),
-            #     nn.ReLU(),
-            #     nn.Linear(in_dim * 2, args.feature_dim),
-            #     nn.Linear(args.feature_dim, args.num_classes),
-            # )
+            # from new_SS import FedCC
+            args.head_p = copy.deepcopy(args.model.fc)
+            in_dim = args.feature_dim
+            args.head_g = nn.Sequential(
+                nn.Linear(in_dim, in_dim * 2),
+                nn.LayerNorm([in_dim * 2]),
+                nn.ReLU(),
+                nn.Linear(in_dim * 2, args.feature_dim),
+                nn.Linear(args.feature_dim, args.num_classes),
+            )
             args.model.fc = nn.Identity()
-            args.model = BaseHeadSplit(args.model, args.head)
+            args.model = BaseMineSplit(args.model, args.head_p, args.head_g)
             server = FedSimP(args, i)
         else:
             raise NotImplementedError("{}".format(args.algorithm))
@@ -454,7 +455,7 @@ if __name__ == "__main__":
     parser.add_argument('-dev', "--device", type=str, default="cuda",
                         choices=["cpu", "cuda"])
     parser.add_argument('-did', "--device_id", type=str, default="0")
-    parser.add_argument('-data', "--dataset", type=str, default="Cifar10_2")
+    parser.add_argument('-data', "--dataset", type=str, default="Cifar10_01")
     parser.add_argument('-ncl', "--num_classes", type=int, default=10)
     parser.add_argument('-m', "--model", type=str, default="CNN")
     parser.add_argument('-lbs', "--batch_size", type=int, default=64)

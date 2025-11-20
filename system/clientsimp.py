@@ -4,31 +4,43 @@ import numpy as np
 import time
 from flcore.clients.clientbase import Client
 from collections import defaultdict
+from sklearn.preprocessing import label_binarize
+from sklearn import metrics
+import torch.nn.functional as F
 
 class clientSimP(Client):
     def __init__(self, args, id, train_samples, test_samples, **kwargs):
         super().__init__(args, id, train_samples, test_samples, **kwargs)
 
-        self.optimizer = torch.optim.SGD(self.model.base.parameters(), lr=self.learning_rate)
-        self.learning_rate_scheduler = torch.optim.lr_scheduler.ExponentialLR(
-            optimizer=self.optimizer,
-            gamma=args.learning_rate_decay_gamma
-        )
-        self.optimizer_per = torch.optim.SGD(self.model.head.parameters(), lr=self.learning_rate)
-        self.learning_rate_scheduler_per = torch.optim.lr_scheduler.ExponentialLR(
-            optimizer=self.optimizer_per,
-            gamma=args.learning_rate_decay_gamma
-        )
-
-        self.plocal_epochs = args.plocal_epochs
         self.hard_thread = 0.5
         self.using_true_samples_only = True
 
 
         self.protos = None
+        self.vars = None
+        self.samples_T_num = None
         self.global_protos = None
         self.loss_mse = torch.nn.MSELoss()
         self.lamda = args.lamda
+
+    def finetune_head(self, trainloader):
+        for param in self.model.parameters():
+            param.requires_grad = True
+        for epoch in range(1):
+            for i, (x, y) in enumerate(trainloader):
+                if type(x) == type([]):
+                    x[0] = x[0].to(self.device)
+                else:
+                    x = x.to(self.device)
+                y = y.to(self.device)
+                if self.train_slow:
+                    time.sleep(0.1 * np.abs(np.random.rand()))
+                rep = self.model.base(x)
+                output = self.model.head_p(rep.detach())
+                loss = self.loss(output, y)
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
 
     def train(self):
         trainloader = self.load_train_data()
@@ -38,14 +50,16 @@ class clientSimP(Client):
         # self.model.to(self.device)
         self.model.train()
 
+        self.finetune_head(trainloader)
+
         max_local_epochs = self.local_epochs
         if self.train_slow:
             max_local_epochs = np.random.randint(1, max_local_epochs // 2)
 
-        # for param in self.model.base.parameters():
-        #     param.requires_grad = True
-        # for param in self.model.head.parameters():
-        #     param.requires_grad = False
+        for param in self.model.head_p.parameters():
+            param.requires_grad = False
+        for param in self.model.head_g.parameters():
+            param.requires_grad = False
 
         protos = defaultdict(list)
         for epoch in range(max_local_epochs):
@@ -58,14 +72,16 @@ class clientSimP(Client):
                 if self.train_slow:
                     time.sleep(0.1 * np.abs(np.random.rand()))
                 rep = self.model.base(x)
-                output = self.model.head(rep)
+                output = self.model.head_p(rep)
                 loss = self.loss(output, y)
+
+
 
                 if self.global_protos is not None:
                     proto_new = copy.deepcopy(rep.detach())
                     for i, yy in enumerate(y):
                         y_c = yy.item()
-                        if type(self.global_protos[y_c]) != type([]):
+                        if y_c in self.global_protos.keys():
                             proto_new[i, :] = self.global_protos[y_c].data
                     loss += self.loss_mse(proto_new, rep) * self.lamda
 
@@ -86,7 +102,7 @@ class clientSimP(Client):
                         'true_class_prob': true_class_probs[i].item(),  # 真实类别的概率
                         'pred_class_prob': pred_class_probs[i].item(),  # 预测类别的概率
                         'is_correct': (y_c == pred_c),  # 预测是否正确
-                        'is_hard':(true_class_probs[i].item()<self.hard_thread), # 是否困难样本
+                        'is_hard': (true_class_probs[i].item() < self.hard_thread),  # 是否困难样本
                         'confidence': pred_class_probs[i].item(),  # 置信度（预测类别的概率）
                         'feature': rep[i, :].detach().data,
                         'all_probs': pred_probs[i, :].detach().data  # 所有类别的概率
@@ -95,9 +111,8 @@ class clientSimP(Client):
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
-        # self.model.cpu()
 
-        self.protos = cluster_protos_by_Truepredict(protos, self.using_true_samples_only)
+        self.protos, self.vars, self.samples_T_num = cluster_protos_by_Truepredict(protos, self.using_true_samples_only)
         # self.err_protos = cluster_error_protos_by_prediction(protos)
 
         if self.learning_rate_decay:
@@ -107,80 +122,87 @@ class clientSimP(Client):
         self.train_time_cost['num_rounds'] += 1
         self.train_time_cost['total_cost'] += time.time() - start_time
 
+
     def set_parameters(self, model):
         for new_param, old_param in zip(model.base.parameters(), self.model.base.parameters()):
+            old_param.data = new_param.data.clone()
+    def set_classifier_parameters(self, classifier_model):
+        for new_param, old_param in zip(classifier_model.parameters(), self.model.head.parameters()):
             old_param.data = new_param.data.clone()
 
     def set_protos(self, global_protos):
         self.global_protos = global_protos
 
-    # def test_metrics(self):
-    #     testloaderfull = self.load_test_data()
-    #     # self.model = self.load_model('model')
-    #     # self.model.to(self.device)
-    #     self.model.eval()
-    #
-    #     test_acc = 0
-    #     test_num = 0
-    #
-    #     if self.global_protos is not None:
-    #         with torch.no_grad():
-    #             for x, y in testloaderfull:
-    #                 if type(x) == type([]):
-    #                     x[0] = x[0].to(self.device)
-    #                 else:
-    #                     x = x.to(self.device)
-    #                 y = y.to(self.device)
-    #                 rep = self.model.base(x)
-    #
-    #                 output = float('inf') * torch.ones(y.shape[0], self.num_classes).to(self.device)
-    #                 for i, r in enumerate(rep):
-    #                     for j, pro in self.global_protos.items():
-    #                         if type(pro) != type([]):
-    #                             output[i, j] = self.loss_mse(r, pro)
-    #
-    #                 test_acc += (torch.sum(torch.argmin(output, dim=1) == y)).item()
-    #                 test_num += y.shape[0]
-    #
-    #         # self.save_local_model()
-    #         return test_acc, test_num, 0
-    #     else:
-    #         return 0, 1e-5, 0
-    #
-    # def train_metrics(self):
-    #     trainloader = self.load_train_data()
-    #     # self.model = self.load_model('model')
-    #     self.model.to(self.device)
-    #     self.model.eval()
-    #
-    #     train_num = 0
-    #     losses = 0
-    #     with torch.no_grad():
-    #         for x, y in trainloader:
-    #             if type(x) == type([]):
-    #                 x[0] = x[0].to(self.device)
-    #             else:
-    #                 x = x.to(self.device)
-    #             y = y.to(self.device)
-    #             rep = self.model.base(x)
-    #             output = self.model.head(rep)
-    #             loss = self.loss(output, y)
-    #
-    #             if self.global_protos is not None:
-    #                 proto_new = copy.deepcopy(rep.detach())
-    #                 for i, yy in enumerate(y):
-    #                     y_c = yy.item()
-    #                     if type(self.global_protos[y_c]) != type([]):
-    #                         proto_new[i, :] = self.global_protos[y_c].data
-    #                 loss += self.loss_mse(proto_new, rep) * self.lamda
-    #             train_num += y.shape[0]
-    #             losses += loss.item() * y.shape[0]
-    #
-    #     # self.model.cpu()
-    #     # self.save_model(self.model, 'model')
-    #
-    #     return losses, train_num
+    def test_metrics(self, model=None):
+        testloader = self.load_test_data()
+        if model == None:
+            model = self.model
+        model.eval()
+        self.model.to(self.device)
 
+        test_acc = 0
+        test_num = 0
+        y_prob = []
+        y_true = []
+
+        with torch.no_grad():
+            for x, y in testloader:
+                if type(x) == type([]):
+                    x[0] = x[0].to(self.device)
+                else:
+                    x = x.to(self.device)
+                y = y.to(self.device)
+                rep = self.model.base(x)
+                out_g = self.model.head_g(rep)
+                out_p = self.model.head_p(rep)
+                output = out_p #+ out_g
+
+                test_acc += (torch.sum(torch.argmax(output, dim=1) == y)).item()
+                test_num += y.shape[0]
+
+                y_prob.append(F.softmax(output).detach().cpu().numpy())
+                nc = self.num_classes
+                if self.num_classes == 2:
+                    nc += 1
+                lb = label_binarize(y.detach().cpu().numpy(), classes=np.arange(nc))
+                if self.num_classes == 2:
+                    lb = lb[:, :2]
+                y_true.append(lb)
+
+        y_prob = np.concatenate(y_prob, axis=0)
+        y_true = np.concatenate(y_true, axis=0)
+
+        auc = metrics.roc_auc_score(y_true, y_prob, average='micro')
+
+        return test_acc, test_num, auc
+
+    def train_metrics(self):
+        trainloader = self.load_train_data()
+        # self.model = self.load_model('model')
+        # self.model.to(self.device)
+        self.model.eval()
+
+        train_num = 0
+        losses = 0
+        with torch.no_grad():
+            for x, y in trainloader:
+                if type(x) == type([]):
+                    x[0] = x[0].to(self.device)
+                else:
+                    x = x.to(self.device)
+                y = y.to(self.device)
+                rep = self.model.base(x)
+                out_g = self.model.head_g(rep)
+                out_p = self.model.head_p(rep)
+                output = out_g + out_p
+                loss = self.loss(output, y)
+                train_num += y.shape[0]
+                losses += loss.item() * y.shape[0]
+
+        # self.model.cpu()
+        # self.save_model(self.model, 'model')
+
+        return losses, train_num
 
 def cluster_protos_by_Truepredict(protos_list, using_true_samples_only=True):
     """按照真实类别中的正确预测聚类"""
@@ -194,10 +216,14 @@ def cluster_protos_by_Truepredict(protos_list, using_true_samples_only=True):
             protos[y_c].append(items['feature'])
             probs[y_c].append(items['true_class_prob'])
 
-    weighted_prototypes = {} # 存储结果
+    weighted_prototypes = {} # 存储均值
+    weighted_variances = {}  # 存储协方差矩阵
+    sample_counts = {}  # 存储每个类别的样本数量
+
     for y_c in protos.keys():
         feature_list = protos[y_c]
         prob_list = probs[y_c]
+        sample_counts[y_c] = len(feature_list)  # 记录样本数量
         # 将特征列表和概率列表转换为张量,计算加权平均原型: sum(proto * prob) / sum(prob)
         features_tensor = torch.stack(feature_list)  # [n_samples, feature_dim]
         probs_tensor = torch.tensor(prob_list, device=features_tensor.device)  # [n_samples]
@@ -208,7 +234,14 @@ def cluster_protos_by_Truepredict(protos_list, using_true_samples_only=True):
         weighted_proto = weighted_features_sum / (total_prob + 1e-8)  # [feature_dim] 计算加权平均原型
         weighted_prototypes[y_c] = weighted_proto
 
-    return weighted_prototypes
+        # 计算加权协方差矩阵
+        deviations = features_tensor - weighted_proto.unsqueeze(0)  # [n_samples, feature_dim] 每个特征与均值的偏差
+        weighted_deviations = deviations * torch.sqrt(probs_tensor.unsqueeze(1))  # 对偏差进行加权
+        squared_deviations = (features_tensor - weighted_proto.unsqueeze(0)) ** 2  # [n_samples, feature_dim]
+        weighted_squared_deviations = squared_deviations * probs_expanded  # 对平方偏差进行加权
+        variance = torch.sum(weighted_squared_deviations, dim=0) / (total_prob + 1e-8) + 1e-6 # [feature_dim]
+        weighted_variances[y_c] = variance
+    return weighted_prototypes, weighted_variances, sample_counts
 
 
 

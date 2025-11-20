@@ -1,7 +1,12 @@
 import copy
 import random
+from poplib import error_proto
+
 import torch
 import time
+
+from pyexpat import features
+
 from clientsimp import clientSimP
 from flcore.servers.serverbase import Server
 from collections import defaultdict
@@ -23,6 +28,7 @@ class FedSimP(Server):
         self.Budget = []
         self.num_classes = args.num_classes
         self.global_protos = [None for _ in range(args.num_classes)]
+        self.global_vars = [None for _ in range(args.num_classes)]
 
     def train(self):
         for i in range(self.global_rounds + 1):
@@ -30,6 +36,7 @@ class FedSimP(Server):
             s_t = time.time()
             self.selected_clients = self.select_clients()
             self.send_models()
+            # self.send_classifer_models()
 
             if i % self.eval_gap == 0:
                 print(f"\n-------------Round number: {i}-------------")
@@ -40,11 +47,13 @@ class FedSimP(Server):
                 client.train()
 
             self.receive_protos()
-            self.global_protos = proto_aggregation(self.uploaded_protos)
+            self.global_protos, self.global_vars = compute_global_protos(self.uploaded_protos, self.uploaded_vars, self.uploaded_nums)
             self.send_protos()
 
             self.receive_models()
             self.aggregate_parameters()
+
+            # self.train_classifier_G()
 
 
             self.Budget.append(time.time() - s_t)
@@ -85,9 +94,13 @@ class FedSimP(Server):
 
         self.uploaded_ids = []
         self.uploaded_protos = []
+        self.uploaded_vars = []
+        self.uploaded_nums = []
         for client in self.selected_clients:
             self.uploaded_ids.append(client.id)
             self.uploaded_protos.append(client.protos)
+            self.uploaded_vars.append(client.vars)
+            self.uploaded_nums.append(client.samples_T_num)
 
     def receive_models(self):
         assert (len(self.selected_clients) > 0)
@@ -104,33 +117,206 @@ class FedSimP(Server):
             if client_time_cost <= self.time_threthold:
                 tot_samples += client.train_samples
                 self.uploaded_weights.append(client.train_samples)
-                self.uploaded_models.append(client.model.base)
+                self.uploaded_models.append(client.model)
         for i, w in enumerate(self.uploaded_weights):
             self.uploaded_weights[i] = w / tot_samples
 
     def aggregate_parameters(self):
         assert (len(self.uploaded_models) > 0)
 
-        self.global_modules = copy.deepcopy(self.uploaded_models[0])
-        for param in self.global_modules.parameters():
+        self.global_model = copy.deepcopy(self.uploaded_models[0])
+        for param in self.global_model.parameters():
             param.data = torch.zeros_like(param.data)
+            # param.data.zero_()
 
         for w, client_model in zip(self.uploaded_weights, self.uploaded_models):
             self.add_parameters(w, client_model)
 
-def proto_aggregation(local_protos_list):
-    agg_protos = defaultdict(list)
-    for local_protos in local_protos_list:
-        for label in local_protos.keys():
-            agg_protos[label].append(local_protos[label])
+    def generate_virtual_representation(self, alpha = 0.5, random_seed=42):
+        """
+        生成虚拟特征表示，结合本地和全局信息
 
-    for [label, proto_list] in agg_protos.items():
-        if len(proto_list) > 1:
-            proto = 0 * proto_list[0].data
-            for i in proto_list:
-                proto += i.data
-            agg_protos[label] = proto / len(proto_list)
-        else:
-            agg_protos[label] = proto_list[0].data
+        Args:
+            alpha: 本地特征的权重 (0-1)，全局特征权重为 1-alpha
+            random_seed: 随机种子
+        """
+        torch.manual_seed(random_seed)
+        samples_dict = {}
 
-    return agg_protos
+        for client in self.selected_clients:
+            protos = client.protos  # 本地均值
+            vars = client.vars  # 本地方差
+            samples = client.samples_T_num  # 本地样本数量
+            err_protos_dicts = client.err_protos  # 错误原型字典
+
+            for class_id in range(self.num_classes):
+                if class_id in samples and samples[class_id] is not None and samples[class_id] > 0:
+                    num_samples = samples[class_id]
+
+                    # 从本地分布采样特征
+                    local_mean = protos[class_id]
+                    local_variance = vars[class_id]
+                    local_samples = local_mean.unsqueeze(0) + torch.randn(
+                        num_samples, local_mean.size(0), device=self.device
+                    ) * torch.sqrt(local_variance).unsqueeze(0)
+
+                    # 从全局分布采样特征
+                    if class_id in self.global_protos and class_id in self.global_vars:
+                        global_mean = self.global_protos[class_id]
+                        global_variance = self.global_vars[class_id]
+                        global_samples = global_mean.unsqueeze(0) + torch.randn(
+                            num_samples, global_mean.size(0), device=self.device
+                        ) * torch.sqrt(global_variance).unsqueeze(0)
+
+                        combined_samples = alpha * local_samples + (1 - alpha) * global_samples # 加权结合本地和全局采样特征
+                    else:
+                        # 如果没有全局信息，只使用本地采样
+                        combined_samples = local_samples
+
+                    if class_id not in samples_dict:
+                        samples_dict[class_id] = []
+                    samples_dict[class_id].append(combined_samples)
+
+                if class_id in err_protos_dicts.keys():
+                    if class_id in samples and samples[class_id] is not None and samples[class_id] > 0:
+                        local_mean = protos[class_id]
+                        local_variance = vars[class_id]
+                    else:
+                        local_mean = None
+                    for err_class, err_protos in err_protos_dicts[class_id].items():
+                        err_mean = err_protos['mean']
+                        err_var = err_protos['variance']
+                        num_samples = err_protos['count']
+
+                        err_samples = err_mean.unsqueeze(0) + torch.randn(
+                            num_samples, err_mean.size(0), device=self.device
+                        ) * torch.sqrt(err_var).unsqueeze(0)
+
+                        if local_mean is not None:
+                            local_samples = local_mean.unsqueeze(0) + torch.randn(
+                                num_samples, local_mean.size(0), device=self.device
+                            ) * torch.sqrt(local_variance).unsqueeze(0)
+                            combined_samples = alpha * err_samples + (1 - alpha) * local_samples
+                        else:
+                            combined_samples = err_samples
+                        if class_id not in samples_dict:
+                            samples_dict[class_id] = []
+                        samples_dict[class_id].append(combined_samples)
+
+        data, targets = [], []
+        for class_id, sample_list in samples_dict.items():
+            if sample_list:  # 确保列表不为空
+                n_samples = len(sample_list)
+                features = torch.cat(sample_list, dim=0)
+                labels = torch.full((n_samples,), class_id, dtype=torch.long)
+                data.append(features)
+                targets.append(labels)
+        data = torch.cat(data, dim=0)
+        targets = torch.cat(targets, dim=0)
+
+        dataset = RepresentationDataset(data, targets)
+        dataloader = torch.utils.data.DataLoader(dataset, batch_size=32, shuffle=True)
+        return dataloader
+
+    def train_classifier_G(self):
+        dataloader = self.generate_virtual_representation()
+        criterion = torch.nn.CrossEntropyLoss()
+        # self.classifier = copy.deepcopy(self.global_model.head)
+        optimizer = torch.optim.SGD(self.global_model.head.parameters(), lr=self.learning_rate)
+        # optimizer = optim.Adam(self.classifier.parameters(), lr=self.args.local_lr, weight_decay=1e-5)
+        for param in self.global_model.head.parameters():
+            param.requires_grad = True
+        self.global_model.head.to(self.device)
+        self.global_model.head.train()
+        for x, y in dataloader:
+            x, y = x.to(self.device), y.to(self.device)
+            # print(x,y)
+            logits = self.global_model.head(x)
+            loss = criterion(logits, y.long())
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+    def send_classifer_models(self):
+        assert (len(self.clients) > 0)
+
+        for client in self.clients:
+            start_time = time.time()
+
+            client.set_classifier_parameters(self.global_model.head_g)
+
+            client.send_time_cost['num_rounds'] += 1
+            client.send_time_cost['total_cost'] += 2 * (time.time() - start_time)
+
+
+class RepresentationDataset(torch.utils.data.Dataset):
+    def __init__(self, data, targets):
+        self.data = data
+        self.targets = targets
+
+    def __getitem__(self, idx):
+        return self.data[idx], self.targets[idx]
+
+    def __len__(self):
+        return len(self.targets)
+
+
+def compute_global_protos(uploaded_protos, uploaded_vars, uploaded_nums):
+    """
+    计算全局均值和方差
+    使用加权平均，权重为每个客户端在每个类别上的样本数量
+    """
+    # 初始化全局统计信息
+    global_protos = {}
+    global_vars = {}
+
+    # 获取所有类别
+    all_classes = set()
+    for protos in uploaded_protos:
+        all_classes.update(protos.keys())
+
+    # 对每个类别分别计算全局均值和方差
+    for class_id in all_classes:
+        # 收集所有客户端中该类别的信息
+        class_means = []
+        class_variances = []
+        class_weights = []  # 权重（样本数量）
+
+        for i, client_protos in enumerate(uploaded_protos):
+            if class_id in client_protos:
+                class_means.append(client_protos[class_id])
+                class_variances.append(uploaded_vars[i][class_id])
+                class_weights.append(uploaded_nums[i][class_id])
+
+        if len(class_means)==0:  # 如果没有客户端有这个类别
+            print("error when cluster global protos for class_id {}".format(class_id))
+            continue
+
+        # 转换为张量
+        means_tensor = torch.stack(class_means)
+        variances_tensor = torch.stack(class_variances)
+        weights_tensor = torch.tensor(class_weights, dtype=torch.float32, device=means_tensor.device)
+
+        # 计算加权均值
+        total_weight = torch.sum(weights_tensor)
+        weighted_means = means_tensor * weights_tensor.unsqueeze(1)
+        global_mean = torch.sum(weighted_means, dim=0) / total_weight
+
+        # 计算加权方差
+        # 使用合并方差公式: σ² = Σ(n_i * (σ_i² + μ_i²)) / Σn_i - μ²
+        weighted_vars = variances_tensor * weights_tensor.unsqueeze(1)
+        weighted_sq_means = means_tensor ** 2 * weights_tensor.unsqueeze(1)
+
+        sum_weighted_vars = torch.sum(weighted_vars, dim=0)
+        sum_weighted_sq_means = torch.sum(weighted_sq_means, dim=0)
+
+        global_variance = (sum_weighted_vars + sum_weighted_sq_means) / total_weight - global_mean ** 2
+
+        # 确保方差为正
+        global_variance = torch.clamp(global_variance, min=1e-6)
+
+        # 存储结果
+        global_protos[class_id] = global_mean
+        global_vars[class_id] = global_variance
+
+    return global_protos, global_vars
