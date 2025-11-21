@@ -13,7 +13,7 @@ class clientSimP(Client):
         super().__init__(args, id, train_samples, test_samples, **kwargs)
 
         self.hard_thread = 0.5
-        self.using_true_samples_only = True
+        self.using_true_samples_only = False
 
 
         self.protos = None
@@ -25,6 +25,8 @@ class clientSimP(Client):
 
     def finetune_head(self, trainloader):
         for param in self.model.parameters():
+            param.requires_grad = False
+        for param in self.model.head_p.parameters():
             param.requires_grad = True
         for epoch in range(1):
             for i, (x, y) in enumerate(trainloader):
@@ -56,6 +58,8 @@ class clientSimP(Client):
         if self.train_slow:
             max_local_epochs = np.random.randint(1, max_local_epochs // 2)
 
+        for param in self.model.parameters():
+            param.requires_grad = True
         for param in self.model.head_p.parameters():
             param.requires_grad = False
         for param in self.model.head_g.parameters():
@@ -72,7 +76,10 @@ class clientSimP(Client):
                 if self.train_slow:
                     time.sleep(0.1 * np.abs(np.random.rand()))
                 rep = self.model.base(x)
-                output = self.model.head_p(rep)
+                output_p = self.model.head_p(rep)
+                output_g = self.model.head_g(rep)
+                # output = output_g
+                output = output_p + output_g
                 loss = self.loss(output, y)
 
 
@@ -85,35 +92,36 @@ class clientSimP(Client):
                             proto_new[i, :] = self.global_protos[y_c].data
                     loss += self.loss_mse(proto_new, rep) * self.lamda
 
-                # 计算预测概率和预测类别
-                with torch.no_grad():
-                    pred_probs = torch.softmax(output, dim=1)  # 所有类别的预测概率
-                    pred_classes = torch.argmax(pred_probs, dim=1)  # 预测的类别
-                    true_class_probs = pred_probs[torch.arange(len(y)), y]  # 真实类别的概率
-                    pred_class_probs = torch.max(pred_probs, dim=1)[0]  # 预测类别的概率
+                if epoch == max_local_epochs-1:
+                    # 计算预测概率和预测类别
+                    with torch.no_grad():
+                        pred_probs = torch.softmax(output, dim=1)  # 所有类别的预测概率
+                        pred_classes = torch.argmax(pred_probs, dim=1)  # 预测的类别
+                        true_class_probs = pred_probs[torch.arange(len(y)), y]  # 真实类别的概率
+                        pred_class_probs = torch.max(pred_probs, dim=1)[0]  # 预测类别的概率
 
-                # 这里考虑一下是否仅用最后一代的特征
-                for i, yy in enumerate(y):
-                    y_c = yy.item()
-                    pred_c = pred_classes[i].item()
-                    protos[y_c].append({
-                        'true_class': y_c,  # 真实类别
-                        'pred_class': pred_c,  # 预测类别
-                        'true_class_prob': true_class_probs[i].item(),  # 真实类别的概率
-                        'pred_class_prob': pred_class_probs[i].item(),  # 预测类别的概率
-                        'is_correct': (y_c == pred_c),  # 预测是否正确
-                        'is_hard': (true_class_probs[i].item() < self.hard_thread),  # 是否困难样本
-                        'confidence': pred_class_probs[i].item(),  # 置信度（预测类别的概率）
-                        'feature': rep[i, :].detach().data,
-                        'all_probs': pred_probs[i, :].detach().data  # 所有类别的概率
-                    })
+                    # 这里考虑一下是否仅用最后一代的特征
+                    for i, yy in enumerate(y):
+                        y_c = yy.item()
+                        pred_c = pred_classes[i].item()
+                        protos[y_c].append({
+                            'true_class': y_c,  # 真实类别
+                            'pred_class': pred_c,  # 预测类别
+                            'true_class_prob': true_class_probs[i].item(),  # 真实类别的概率
+                            'pred_class_prob': pred_class_probs[i].item(),  # 预测类别的概率
+                            'is_correct': (y_c == pred_c),  # 预测是否正确
+                            'is_hard': (true_class_probs[i].item() < self.hard_thread),  # 是否困难样本
+                            'confidence': pred_class_probs[i].item(),  # 置信度（预测类别的概率）
+                            'feature': rep[i, :].detach().data,
+                            'all_probs': pred_probs[i, :].detach().data  # 所有类别的概率
+                        })
 
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
 
         self.protos, self.vars, self.samples_T_num = cluster_protos_by_Truepredict(protos, self.using_true_samples_only)
-        # self.err_protos = cluster_error_protos_by_prediction(protos)
+        self.err_protos = cluster_error_protos_by_prediction(protos)
 
         if self.learning_rate_decay:
             self.learning_rate_scheduler.step()
@@ -127,7 +135,7 @@ class clientSimP(Client):
         for new_param, old_param in zip(model.base.parameters(), self.model.base.parameters()):
             old_param.data = new_param.data.clone()
     def set_classifier_parameters(self, classifier_model):
-        for new_param, old_param in zip(classifier_model.parameters(), self.model.head.parameters()):
+        for new_param, old_param in zip(classifier_model.parameters(), self.model.head_g.parameters()):
             old_param.data = new_param.data.clone()
 
     def set_protos(self, global_protos):
@@ -141,6 +149,7 @@ class clientSimP(Client):
         self.model.to(self.device)
 
         test_acc = 0
+        test_acc_p, test_acc_g = 0, 0
         test_num = 0
         y_prob = []
         y_true = []
@@ -155,7 +164,11 @@ class clientSimP(Client):
                 rep = self.model.base(x)
                 out_g = self.model.head_g(rep)
                 out_p = self.model.head_p(rep)
-                output = out_p #+ out_g
+                # output = out_g
+                output = out_p + out_g
+
+                test_acc_p += (torch.sum(torch.argmax(out_p, dim=1) == y)).item()
+                test_acc_g += (torch.sum(torch.argmax(out_g, dim=1) == y)).item()
 
                 test_acc += (torch.sum(torch.argmax(output, dim=1) == y)).item()
                 test_num += y.shape[0]
@@ -174,7 +187,7 @@ class clientSimP(Client):
 
         auc = metrics.roc_auc_score(y_true, y_prob, average='micro')
 
-        return test_acc, test_num, auc
+        return test_acc, test_num, auc, test_acc_p, test_acc_g
 
     def train_metrics(self):
         trainloader = self.load_train_data()
@@ -210,12 +223,15 @@ def cluster_protos_by_Truepredict(protos_list, using_true_samples_only=True):
     probs = defaultdict(list)
     for y_c, dict_list in protos_list.items():
         for items in dict_list:
-            if using_true_samples_only:
-                if not items['is_correct']:
-                    continue
+            if using_true_samples_only and not items['is_correct']:
+                continue
             protos[y_c].append(items['feature'])
             probs[y_c].append(items['true_class_prob'])
 
+    prototypes, variances, counts = compute_mean_and_variance(protos, probs)
+    return prototypes, variances, counts
+
+def compute_mean_and_variance(protos, probs):
     weighted_prototypes = {} # 存储均值
     weighted_variances = {}  # 存储协方差矩阵
     sample_counts = {}  # 存储每个类别的样本数量
@@ -227,23 +243,19 @@ def cluster_protos_by_Truepredict(protos_list, using_true_samples_only=True):
         # 将特征列表和概率列表转换为张量,计算加权平均原型: sum(proto * prob) / sum(prob)
         features_tensor = torch.stack(feature_list)  # [n_samples, feature_dim]
         probs_tensor = torch.tensor(prob_list, device=features_tensor.device)  # [n_samples]
-        probs_expanded = probs_tensor.unsqueeze(1).expand_as(features_tensor)  # [n_samples, feature_dim]
-        # 计算加权特征和
-        weighted_features_sum = torch.sum(features_tensor * probs_expanded, dim=0)  # [feature_dim]
         total_prob = torch.sum(probs_tensor)  # 标量
+        # 计算加权特征和
+        probs_expanded = probs_tensor.unsqueeze(1).expand_as(features_tensor)  # [n_samples, feature_dim]
+        weighted_features_sum = torch.sum(features_tensor * probs_expanded, dim=0)  # [feature_dim]
         weighted_proto = weighted_features_sum / (total_prob + 1e-8)  # [feature_dim] 计算加权平均原型
         weighted_prototypes[y_c] = weighted_proto
 
-        # 计算加权协方差矩阵
-        deviations = features_tensor - weighted_proto.unsqueeze(0)  # [n_samples, feature_dim] 每个特征与均值的偏差
-        weighted_deviations = deviations * torch.sqrt(probs_tensor.unsqueeze(1))  # 对偏差进行加权
+        # 计算加权方差
         squared_deviations = (features_tensor - weighted_proto.unsqueeze(0)) ** 2  # [n_samples, feature_dim]
         weighted_squared_deviations = squared_deviations * probs_expanded  # 对平方偏差进行加权
         variance = torch.sum(weighted_squared_deviations, dim=0) / (total_prob + 1e-8) + 1e-6 # [feature_dim]
         weighted_variances[y_c] = variance
     return weighted_prototypes, weighted_variances, sample_counts
-
-
 
 def cluster_error_protos_by_prediction(protos_list):
     """对每个真实类别中的错误分类样本，按照错误预测的类别分别聚类得到均值和方差
@@ -261,53 +273,35 @@ def cluster_error_protos_by_prediction(protos_list):
     # 遍历每个真实类别
     for true_class, dict_list in protos_list.items():
         # 初始化该真实类别的错误预测字典
-        pred_clusters = {}
+        pred_clusters = defaultdict(list)
 
+        protos, probs_true, probs_pred = defaultdict(list), defaultdict(list), defaultdict(list)
         # 遍历该真实类别的所有样本
-        for item in dict_list:
+        for items in dict_list:
             # 只处理错误分类的样本
-            if not item['is_correct']:
-                pred_class = item['pred_class']
-
-                # 如果该预测类别还未创建，则初始化
-                if pred_class not in pred_clusters:
-                    pred_clusters[pred_class] = {
-                        'features': [],
-                        'true_probs': [],
-                        'pred_probs': []
-                    }
-
-                # 添加特征和概率信息
-                pred_clusters[pred_class]['features'].append(item['feature'])
-                pred_clusters[pred_class]['true_probs'].append(item['true_class_prob'])
-                pred_clusters[pred_class]['pred_probs'].append(item['pred_class_prob'])
+            if not items['is_correct']:
+                pred_class = items['pred_class']
+                protos[pred_class].append(items['feature'])
+                probs_true[pred_class].append(items['true_class_prob'])
+                probs_pred[pred_class].append(items['pred_class_prob'])
 
         # 计算每个预测类别的均值和方差
+        mean_features, variance_features, counts = compute_mean_and_variance(protos, probs_true) #这里不一定要加权概率，待尝试
         true_class_errors = {}
-        for pred_class, cluster_data in pred_clusters.items():
-            if len(cluster_data['features']) > 0:
-                # 转换为张量
-                features_tensor = torch.stack(cluster_data['features'])
+        for pred_class in protos.keys():
+            # 计算概率统计
+            avg_true_prob = torch.mean(torch.tensor(probs_true[pred_class]))
+            avg_pred_prob = torch.mean(torch.tensor(probs_pred[pred_class]))
 
-                # 计算均值
-                mean_features = torch.mean(features_tensor, dim=0)
-
-                # 计算方差（沿每个特征维度）
-                variance_features = torch.var(features_tensor, dim=0, unbiased=False)
-
-                # 计算概率统计
-                avg_true_prob = torch.mean(torch.tensor(cluster_data['true_probs']))
-                avg_pred_prob = torch.mean(torch.tensor(cluster_data['pred_probs']))
-
-                # 存储结果
-                true_class_errors[pred_class] = {
-                    'mean': mean_features,
-                    'variance': variance_features,
-                    'count': len(cluster_data['features']),
-                    'avg_true_prob': avg_true_prob.item(),
-                    'avg_pred_prob': avg_pred_prob.item(),
-                    # 'features': features_tensor  # 保留原始特征用于进一步分析
-                }
+            # 存储结果
+            true_class_errors[pred_class] = {
+                'mean': mean_features[pred_class],
+                'variance': variance_features[pred_class],
+                'count': counts[pred_class],
+                'avg_true_prob': avg_true_prob.item(),
+                'avg_pred_prob': avg_pred_prob.item(),
+                # 'features': features_tensor  # 保留原始特征用于进一步分析
+            }
 
         # 只有当该真实类别有错误分类时才添加到结果中
         if true_class_errors:

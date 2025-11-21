@@ -4,7 +4,7 @@ from poplib import error_proto
 
 import torch
 import time
-
+import numpy as np
 from pyexpat import features
 
 from clientsimp import clientSimP
@@ -29,6 +29,8 @@ class FedSimP(Server):
         self.num_classes = args.num_classes
         self.global_protos = [None for _ in range(args.num_classes)]
         self.global_vars = [None for _ in range(args.num_classes)]
+        self.rs_test_acc2=[]
+        self.rs_test_acc3=[]
 
     def train(self):
         for i in range(self.global_rounds + 1):
@@ -36,7 +38,7 @@ class FedSimP(Server):
             s_t = time.time()
             self.selected_clients = self.select_clients()
             self.send_models()
-            # self.send_classifer_models()
+            self.send_classifer_models()
 
             if i % self.eval_gap == 0:
                 print(f"\n-------------Round number: {i}-------------")
@@ -53,7 +55,7 @@ class FedSimP(Server):
             self.receive_models()
             self.aggregate_parameters()
 
-            # self.train_classifier_G()
+            self.train_classifier_G()
 
 
             self.Budget.append(time.time() - s_t)
@@ -66,6 +68,8 @@ class FedSimP(Server):
             # self.print_(max(self.rs_test_acc), max(
             #     self.rs_train_acc), min(self.rs_train_loss))
             print(max(self.rs_test_acc))
+            print(max(self.rs_test_acc2))
+            print(max(self.rs_test_acc3))
         print("\nAverage time cost per round.")
         print(sum(self.Budget[1:]) / len(self.Budget[1:]))
 
@@ -132,6 +136,55 @@ class FedSimP(Server):
         for w, client_model in zip(self.uploaded_weights, self.uploaded_models):
             self.add_parameters(w, client_model)
 
+    def test_metrics(self):
+        if self.eval_new_clients and self.num_new_clients > 0:
+            self.fine_tuning_new_clients()
+            return self.test_metrics_new_clients()
+
+        num_samples = []
+        tot_correct, tot_correct2, tot_correct3 = [],[],[]
+        tot_auc = []
+        for c in self.clients:
+            ct, ns, auc, ct_p, ct_g = c.test_metrics()
+            tot_correct.append(ct * 1.0)
+            tot_correct2.append(ct_p * 1.0)
+            tot_correct3.append(ct_g * 1.0)
+            tot_auc.append(auc * ns)
+            num_samples.append(ns)
+
+        ids = [c.id for c in self.clients]
+
+        return ids, num_samples, tot_correct, tot_auc, tot_correct2, tot_correct3
+
+    def evaluate(self, acc=None, loss=None):
+        stats = self.test_metrics()
+        stats_train = self.train_metrics()
+
+        test_acc = sum(stats[2])*1.0 / sum(stats[1])
+        test_acc_p = sum(stats[4])*1.0 / sum(stats[1])
+        test_acc_g = sum(stats[5])*1.0 / sum(stats[1])
+        train_loss = sum(stats_train[2]) * 1.0 / sum(stats_train[1])
+        accs = [a / n for a, n in zip(stats[2], stats[1])]
+
+        if acc == None:
+            self.rs_test_acc.append(test_acc)
+            self.rs_test_acc2.append(test_acc_p)
+            self.rs_test_acc3.append(test_acc_g)
+        else:
+            acc.append(test_acc)
+
+        if loss == None:
+            self.rs_train_loss.append(train_loss)
+        else:
+            loss.append(train_loss)
+
+        print("Averaged Train Loss: {:.4f}".format(train_loss))
+        print("Averaged Test Accuracy: {:.4f}".format(test_acc))
+        print("Averaged Test Accuracy2: {:.4f}".format(test_acc_p))
+        print("Averaged Test Accuracy3: {:.4f}".format(test_acc_g))
+        # self.print_(test_acc, train_acc, train_loss)
+        print("Std Test Accuracy: {:.4f}".format(np.std(accs)))
+
     def generate_virtual_representation(self, alpha = 0.5, random_seed=42):
         """
         生成虚拟特征表示，结合本地和全局信息
@@ -141,7 +194,7 @@ class FedSimP(Server):
             random_seed: 随机种子
         """
         torch.manual_seed(random_seed)
-        samples_dict = {}
+        samples_dict = defaultdict(list)
 
         for client in self.selected_clients:
             protos = client.protos  # 本地均值
@@ -205,12 +258,13 @@ class FedSimP(Server):
 
         data, targets = [], []
         for class_id, sample_list in samples_dict.items():
-            if sample_list:  # 确保列表不为空
-                n_samples = len(sample_list)
-                features = torch.cat(sample_list, dim=0)
-                labels = torch.full((n_samples,), class_id, dtype=torch.long)
-                data.append(features)
-                targets.append(labels)
+            sample_list = [s for s in sample_list if s.numel()]  # 2. 去空
+            if not sample_list:
+                continue
+            features = torch.cat(sample_list, dim=0)  # (N, D)
+            labels = torch.full((features.size(0),), class_id, dtype=torch.long, device=self.device)
+            data.append(features)
+            targets.append(labels)
         data = torch.cat(data, dim=0)
         targets = torch.cat(targets, dim=0)
 
@@ -221,21 +275,32 @@ class FedSimP(Server):
     def train_classifier_G(self):
         dataloader = self.generate_virtual_representation()
         criterion = torch.nn.CrossEntropyLoss()
-        # self.classifier = copy.deepcopy(self.global_model.head)
-        optimizer = torch.optim.SGD(self.global_model.head.parameters(), lr=self.learning_rate)
-        # optimizer = optim.Adam(self.classifier.parameters(), lr=self.args.local_lr, weight_decay=1e-5)
-        for param in self.global_model.head.parameters():
+        classifier = self.global_model.head_g.to(self.device)
+        # optimizer = torch.optim.SGD(classifier.parameters(), lr=self.learning_rate)
+        optimizer = torch.optim.Adam(classifier.parameters(), lr=self.learning_rate, weight_decay=1e-5)
+        classifier.train()
+        for param in classifier.parameters():
             param.requires_grad = True
-        self.global_model.head.to(self.device)
-        self.global_model.head.train()
-        for x, y in dataloader:
-            x, y = x.to(self.device), y.to(self.device)
-            # print(x,y)
-            logits = self.global_model.head(x)
-            loss = criterion(logits, y.long())
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+        for _ in range(10):
+            for x, y in dataloader:
+                x, y = x.to(self.device), y.to(self.device)
+                # print(x,y)
+                logits = classifier(x)
+                loss = criterion(logits, y.long())
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+            self.global_model.head_g = classifier
+
+            with torch.no_grad():
+                test_acc, test_num = 0, 0
+                for x, y in dataloader:
+                    x, y = x.to(self.device), y.to(self.device)
+                    output = classifier(x)
+                    test_acc += (torch.sum(torch.argmax(output, dim=1) == y)).item()
+                    test_num += y.shape[0]
+                test_acc = test_acc / test_num
+                print("classifier_G's acc for virtual representation is {}".format(test_acc))
 
     def send_classifer_models(self):
         assert (len(self.clients) > 0)
