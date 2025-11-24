@@ -23,7 +23,7 @@ class clientSimP(Client):
         self.loss_mse = torch.nn.MSELoss()
         self.lamda = args.lamda
 
-    def finetune_head(self, trainloader):
+    def finetune_head_p(self, trainloader):
         for param in self.model.parameters():
             param.requires_grad = False
         for param in self.model.head_p.parameters():
@@ -43,8 +43,27 @@ class clientSimP(Client):
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
-
-    def train(self):
+    def finetune_head_g(self, trainloader):
+        for param in self.model.parameters():
+            param.requires_grad = False
+        for param in self.model.head_g.parameters():
+            param.requires_grad = True
+        for epoch in range(1):
+            for i, (x, y) in enumerate(trainloader):
+                if type(x) == type([]):
+                    x[0] = x[0].to(self.device)
+                else:
+                    x = x.to(self.device)
+                y = y.to(self.device)
+                if self.train_slow:
+                    time.sleep(0.1 * np.abs(np.random.rand()))
+                rep = self.model.base(x)
+                output = self.model.head_g(rep.detach())
+                loss = self.loss(output, y)
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
+    def train(self, global_epoch):
         trainloader = self.load_train_data()
 
         start_time = time.time()
@@ -52,7 +71,8 @@ class clientSimP(Client):
         # self.model.to(self.device)
         self.model.train()
 
-        self.finetune_head(trainloader)
+        # self.finetune_head_p(trainloader)
+        # self.finetune_head_g(trainloader)
 
         max_local_epochs = self.local_epochs
         if self.train_slow:
@@ -60,8 +80,8 @@ class clientSimP(Client):
 
         for param in self.model.parameters():
             param.requires_grad = True
-        for param in self.model.head_p.parameters():
-            param.requires_grad = False
+        # for param in self.model.head_p.parameters():
+        #     param.requires_grad = False
         for param in self.model.head_g.parameters():
             param.requires_grad = False
 
@@ -77,9 +97,11 @@ class clientSimP(Client):
                     time.sleep(0.1 * np.abs(np.random.rand()))
                 rep = self.model.base(x)
                 output_p = self.model.head_p(rep)
-                output_g = self.model.head_g(rep)
-                # output = output_g
-                output = output_p + output_g
+                if global_epoch<=20:
+                    output = output_g
+                else:
+                    output_g = self.model.head_g(rep)
+                    output = output_p + output_g
                 loss = self.loss(output, y)
 
 
@@ -141,11 +163,9 @@ class clientSimP(Client):
     def set_protos(self, global_protos):
         self.global_protos = global_protos
 
-    def test_metrics(self, model=None):
+    def test_metrics(self):
         testloader = self.load_test_data()
-        if model == None:
-            model = self.model
-        model.eval()
+        self.model.eval()
         self.model.to(self.device)
 
         test_acc = 0
@@ -185,7 +205,11 @@ class clientSimP(Client):
         y_prob = np.concatenate(y_prob, axis=0)
         y_true = np.concatenate(y_true, axis=0)
 
-        auc = metrics.roc_auc_score(y_true, y_prob, average='micro')
+        try:
+            auc = metrics.roc_auc_score(y_true, y_prob, average='micro')
+        except:
+            print("break as output is nan !")
+            auc = 0.0
 
         return test_acc, test_num, auc, test_acc_p, test_acc_g
 

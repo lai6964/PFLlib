@@ -27,8 +27,8 @@ class FedSimP(Server):
         # self.load_model()
         self.Budget = []
         self.num_classes = args.num_classes
-        self.global_protos = [None for _ in range(args.num_classes)]
-        self.global_vars = [None for _ in range(args.num_classes)]
+        self.global_protos = {}
+        self.global_vars = {}
         self.rs_test_acc2=[]
         self.rs_test_acc3=[]
 
@@ -37,8 +37,7 @@ class FedSimP(Server):
             sys.stdout.flush()  # 强制刷新标准输出缓冲区
             s_t = time.time()
             self.selected_clients = self.select_clients()
-            self.send_models()
-            self.send_classifer_models()
+            # self.send_models()
 
             if i % self.eval_gap == 0:
                 print(f"\n-------------Round number: {i}-------------")
@@ -46,16 +45,18 @@ class FedSimP(Server):
                 self.evaluate()
 
             for client in self.selected_clients:
-                client.train()
+                client.train(i)
 
             self.receive_protos()
             self.global_protos, self.global_vars = compute_global_protos(self.uploaded_protos, self.uploaded_vars, self.uploaded_nums)
             self.send_protos()
 
-            self.receive_models()
-            self.aggregate_parameters()
+            # self.receive_models()
+            # self.aggregate_parameters()
 
-            self.train_classifier_G()
+            if i>20:
+                self.train_classifier_G()
+                self.send_classifer_models()
 
 
             self.Budget.append(time.time() - s_t)
@@ -274,14 +275,29 @@ class FedSimP(Server):
 
     def train_classifier_G(self):
         dataloader = self.generate_virtual_representation()
+        classifier = copy.deepcopy(self.global_model.head_g)
+        classifier.to(self.device)
+
+        with torch.no_grad():
+            test_acc, test_num = 0, 0
+            for x, y in dataloader:
+                x, y = x.to(self.device), y.to(self.device)
+                output = classifier(x)
+                test_acc += (torch.sum(torch.argmax(output, dim=1) == y)).item()
+                test_num += y.shape[0]
+            test_acc = test_acc / test_num
+            print("classifier_G's acc for virtual representation is {}".format(test_acc))
+
         criterion = torch.nn.CrossEntropyLoss()
-        classifier = self.global_model.head_g.to(self.device)
         # optimizer = torch.optim.SGD(classifier.parameters(), lr=self.learning_rate)
         optimizer = torch.optim.Adam(classifier.parameters(), lr=self.learning_rate, weight_decay=1e-5)
         classifier.train()
         for param in classifier.parameters():
             param.requires_grad = True
-        for _ in range(10):
+        for _ in range(1):
+            classifier.train()
+            for param in classifier.parameters():
+                param.requires_grad = True
             for x, y in dataloader:
                 x, y = x.to(self.device), y.to(self.device)
                 # print(x,y)
@@ -290,7 +306,6 @@ class FedSimP(Server):
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-            self.global_model.head_g = classifier
 
             with torch.no_grad():
                 test_acc, test_num = 0, 0
@@ -301,7 +316,10 @@ class FedSimP(Server):
                     test_num += y.shape[0]
                 test_acc = test_acc / test_num
                 print("classifier_G's acc for virtual representation is {}".format(test_acc))
-
+        if test_acc<0.5:
+            print("classifier_G's acc is low")
+        else:
+            self.global_model.head_g = copy.deepcopy(classifier)
     def send_classifer_models(self):
         assert (len(self.clients) > 0)
 
@@ -368,14 +386,18 @@ def compute_global_protos(uploaded_protos, uploaded_vars, uploaded_nums):
         global_mean = torch.sum(weighted_means, dim=0) / total_weight
 
         # 计算加权方差
-        # 使用合并方差公式: σ² = Σ(n_i * (σ_i² + μ_i²)) / Σn_i - μ²
-        weighted_vars = variances_tensor * weights_tensor.unsqueeze(1)
-        weighted_sq_means = means_tensor ** 2 * weights_tensor.unsqueeze(1)
+        # 使用合并方差公式: σ²_total = Σ[n_i × (σ_i² + (μ_i - μ_total)²)] / Σn_i
+        # 计算每个客户端均值与全局均值的偏差平方
+        deviations = means_tensor - global_mean.unsqueeze(0)  # [m, d]
+        squared_deviations = deviations ** 2  # [m, d]
 
-        sum_weighted_vars = torch.sum(weighted_vars, dim=0)
-        sum_weighted_sq_means = torch.sum(weighted_sq_means, dim=0)
+        # 计算每个客户端的内部方差 + 均值偏差的加权和
+        weighted_internal_vars = variances_tensor * weights_tensor.unsqueeze(1)  # [m, d]
+        weighted_squared_deviations = squared_deviations * weights_tensor.unsqueeze(1)  # [m, d]
 
-        global_variance = (sum_weighted_vars + sum_weighted_sq_means) / total_weight - global_mean ** 2
+        # 合并方差
+        global_variance = (torch.sum(weighted_internal_vars, dim=0) +
+                           torch.sum(weighted_squared_deviations, dim=0)) / total_weight
 
         # 确保方差为正
         global_variance = torch.clamp(global_variance, min=1e-6)
