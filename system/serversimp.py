@@ -37,7 +37,7 @@ class FedSimP(Server):
             sys.stdout.flush()  # 强制刷新标准输出缓冲区
             s_t = time.time()
             self.selected_clients = self.select_clients()
-            # self.send_models()
+            self.send_models()
 
             if i % self.eval_gap == 0:
                 print(f"\n-------------Round number: {i}-------------")
@@ -51,10 +51,10 @@ class FedSimP(Server):
             self.global_protos, self.global_vars = compute_global_protos(self.uploaded_protos, self.uploaded_vars, self.uploaded_nums)
             self.send_protos()
 
-            # self.receive_models()
-            # self.aggregate_parameters()
+            self.receive_models()
+            self.aggregate_parameters()
 
-            if i>20:
+            if i>0:
                 self.train_classifier_G()
                 self.send_classifer_models()
 

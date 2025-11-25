@@ -97,12 +97,13 @@ class clientSimP(Client):
                     time.sleep(0.1 * np.abs(np.random.rand()))
                 rep = self.model.base(x)
                 output_p = self.model.head_p(rep)
+                loss = self.loss(output_p, y)
                 if global_epoch<=20:
-                    output = output_g
+                    output = output_p
                 else:
                     output_g = self.model.head_g(rep)
                     output = output_p + output_g
-                loss = self.loss(output, y)
+                    loss += self.loss(output_g, y)
 
 
 
