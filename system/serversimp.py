@@ -11,6 +11,7 @@ from clientsimp import clientSimP
 from flcore.servers.serverbase import Server
 from collections import defaultdict
 import sys
+import json
 
 
 class FedSimP(Server):
@@ -31,13 +32,15 @@ class FedSimP(Server):
         self.global_vars = {}
         self.rs_test_acc2=[]
         self.rs_test_acc3=[]
+        self.ploting_figure = args.ploting_figure
+        self.save_features = args.save_features
 
     def train(self):
         for i in range(self.global_rounds + 1):
             sys.stdout.flush()  # 强制刷新标准输出缓冲区
             s_t = time.time()
             self.selected_clients = self.select_clients()
-            self.send_models()
+            # self.send_models()
 
             if i % self.eval_gap == 0:
                 print(f"\n-------------Round number: {i}-------------")
@@ -48,6 +51,8 @@ class FedSimP(Server):
                 client.train(i)
 
             self.receive_protos()
+            if self.save_features:
+                save_features_toplot(i, self.uploaded_protos, self.uploaded_vars, self.uploaded_nums)
             self.global_protos, self.global_vars = compute_global_protos(self.uploaded_protos, self.uploaded_vars, self.uploaded_nums)
             self.send_protos()
 
@@ -55,7 +60,7 @@ class FedSimP(Server):
             self.aggregate_parameters()
 
             if i>0:
-                self.train_classifier_G()
+                self.train_classifier_G(i)
                 self.send_classifer_models()
 
 
@@ -273,8 +278,10 @@ class FedSimP(Server):
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=32, shuffle=True)
         return dataloader
 
-    def train_classifier_G(self):
+    def train_classifier_G(self,epoch):
         dataloader = self.generate_virtual_representation()
+        if self.ploting_figure:
+            show_tsne_fig(epoch, dataloader)
         classifier = copy.deepcopy(self.global_model.head_g)
         classifier.to(self.device)
 
@@ -407,3 +414,78 @@ def compute_global_protos(uploaded_protos, uploaded_vars, uploaded_nums):
         global_vars[class_id] = global_variance
 
     return global_protos, global_vars
+
+def save_features_toplot(epoch, uploaded_protos, uploaded_vars, uploaded_nums):
+    with open("features/feature/{}.json".format(epoch), "w") as f:
+        for protos in uploaded_protos:
+            d_clean = {k: v.detach().cpu().tolist() for k, v in protos.items()}
+            json.dump(d_clean, f)
+    with open("features/var/{}.json".format(epoch), "w") as f:
+        for vars in uploaded_vars:
+            d_clean = {k: v.detach().cpu().tolist() for k, v in vars.items()}
+            json.dump(d_clean, f)
+    with open("features/num/{}.json".format(epoch), "w") as f:
+        for nums in uploaded_nums:
+            # d_clean = {k: v.detach().cpu().tolist() for k, v in nums.items()}
+            json.dump(nums, f)
+
+def show_tsne_fig(epoch, dataloader):
+    import matplotlib.pyplot as plt
+    from sklearn.manifold import TSNE
+    np.random.seed(42)
+    font_legend = {'family': 'Times New Roman',
+                   'weight': 'normal',
+                   'size': 20}
+    features, labels = [],[]
+    # for x,y in dataloader:
+    #     for xx,yy in zip(x,y):
+    #         features.append(xx.cpu().numpy())
+    #         labels.append(yy)
+    # features = np.stack(features)
+
+    for x, y in dataloader:
+        batch_size = x.size(0) # 对 batch 内样本做 1% 伯努利采样
+        mask = np.random.rand(batch_size) < 0.01          # ~1/100
+        if mask.sum() == 0:                               # 极端情况全跳过
+            continue
+        x_sub = x[mask]                                   # 已是在 cpu 上的 tensor
+        y_sub = y[mask]
+        features.append(x_sub.cpu().numpy())
+        labels.append(y_sub.cpu().numpy())
+
+    # 拼成 (N, D) 和 (N,)
+    features = np.concatenate(features, axis=0)
+    labels   = np.concatenate(labels,  axis=0)
+    nan_mask = ~np.isnan(features).any(axis=1)
+    features = features[nan_mask]
+    labels   = labels[nan_mask]
+    if features.shape[0] == 0:
+        print('[WARN] 所有特征都是 NaN，跳过绘图')
+        return
+    # 初始化t-SNE对象
+    tsne = TSNE(n_components=2, random_state=0)
+    # 使用t-SNE进行降维
+    reduced_features = tsne.fit_transform(features)
+
+    # # 绘制t-SNE图
+    plt.figure(figsize=(8, 6))
+    unique_labels = list(set(labels))
+    colors=plt.cm.get_cmap('tab10', len(unique_labels))  # 获取颜色映射
+    for i, label in enumerate(unique_labels):
+        # 找到对应标签的所有点
+        label_indices = [j for j, l in enumerate(labels) if l == label]
+        plt.scatter(reduced_features[label_indices, 0],
+                    reduced_features[label_indices, 1],
+                    color=colors(i),
+                    # marker=markers[i],
+                    )
+    ax = plt.gca()  # 获取当前坐标轴对象
+    ax.set_xticks([])  # 隐藏 x 轴刻度
+    ax.set_yticks([])  # 隐藏 y 轴刻度
+    plt.legend(prop=font_legend,
+               borderaxespad=0.1)  # 与轴不留额外间距
+    plt.tight_layout()
+    plt.savefig("features/imgs/{}.png".format(epoch),
+                bbox_inches='tight',  # 关键：让 savefig 计算紧凑边界
+                pad_inches=0.1)  # 可选：不留额外边距（默认 0.1）
+    # plt.show()

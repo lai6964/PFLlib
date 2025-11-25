@@ -13,7 +13,7 @@ class clientSimP(Client):
         super().__init__(args, id, train_samples, test_samples, **kwargs)
 
         self.hard_thread = 0.5
-        self.using_true_samples_only = False
+        self.using_true_samples_only = True
 
 
         self.protos = None
@@ -98,12 +98,11 @@ class clientSimP(Client):
                 rep = self.model.base(x)
                 output_p = self.model.head_p(rep)
                 loss = self.loss(output_p, y)
-                if global_epoch<=20:
-                    output = output_p
-                else:
-                    output_g = self.model.head_g(rep)
-                    output = output_p + output_g
-                    loss += self.loss(output_g, y)
+                output = output_p
+                # if global_epoch>0:
+                #     output_g = self.model.head_g(rep)
+                #     # output = output_p + output_g
+                #     loss += self.loss(output_g, y)
 
 
 
@@ -115,7 +114,7 @@ class clientSimP(Client):
                             proto_new[i, :] = self.global_protos[y_c].data
                     loss += self.loss_mse(proto_new, rep) * self.lamda
 
-                if epoch == max_local_epochs-1:
+                if True:#epoch == max_local_epochs-1:
                     # 计算预测概率和预测类别
                     with torch.no_grad():
                         pred_probs = torch.softmax(output, dim=1)  # 所有类别的预测概率
@@ -148,7 +147,6 @@ class clientSimP(Client):
 
         if self.learning_rate_decay:
             self.learning_rate_scheduler.step()
-            self.learning_rate_scheduler_per.step()
 
         self.train_time_cost['num_rounds'] += 1
         self.train_time_cost['total_cost'] += time.time() - start_time
@@ -219,7 +217,7 @@ class clientSimP(Client):
         # self.model = self.load_model('model')
         # self.model.to(self.device)
         self.model.eval()
-
+        train_acc_p, train_acc_g, train_acc=0,0,0
         train_num = 0
         losses = 0
         with torch.no_grad():
@@ -233,10 +231,13 @@ class clientSimP(Client):
                 out_g = self.model.head_g(rep)
                 out_p = self.model.head_p(rep)
                 output = out_g + out_p
-                loss = self.loss(output, y)
+                loss = self.loss(out_p, y)
+                train_acc_p += (torch.sum(torch.argmax(out_p, dim=1) == y)).item()
+                train_acc_g += (torch.sum(torch.argmax(out_g, dim=1) == y)).item()
+                train_acc += (torch.sum(torch.argmax(output, dim=1) == y)).item()
                 train_num += y.shape[0]
                 losses += loss.item() * y.shape[0]
-
+        print("train_acc:{:.4f}\ttrain_acc_p:{:.4f}\ttrain_acc_g:{:.4f}".format(train_acc/train_num, train_acc_p/train_num, train_acc_g/train_num))
         # self.model.cpu()
         # self.save_model(self.model, 'model')
 

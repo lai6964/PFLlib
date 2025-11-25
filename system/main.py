@@ -560,6 +560,8 @@ if __name__ == "__main__":
     parser.add_argument("--using_glocla", type=str2bool, default=True)
     parser.add_argument("--using_normal", type=str2bool, default=False)
     parser.add_argument("--using_aggregate", type=str2bool, default=False)
+    parser.add_argument("--ploting_figure", type=str2bool, default=False)
+    parser.add_argument("--save_features", type=str2bool, default=False)
     # python main.py -data Cifar100 -algo FedDFCC -did 1 --using_reconstructloss False --using_tripletloss False --using_specialloss False --using_glocla False --using_aggregate False | tee FedDCC_cifar100_FFFFF.log
 
 
