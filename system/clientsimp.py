@@ -26,6 +26,7 @@ class clientSimP(Client):
         self.using_triple_loss = args.using_triple_loss
         self.triple_dis_loss = args.triple_dis_loss
         self.triple_cosine_loss = args.triple_cosine_loss
+        self.using_normal = args.using_normal
 
     def finetune_head_p(self, trainloader):
         for param in self.model.parameters():
@@ -67,6 +68,107 @@ class clientSimP(Client):
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
+    def finetune_base(self, trainloader):
+        for param in self.model.parameters():
+            param.requires_grad = False
+        for param in self.model.base.parameters():
+            param.requires_grad = True
+        for epoch in range(1):
+            for i, (x, y) in enumerate(trainloader):
+                if type(x) == type([]):
+                    x[0] = x[0].to(self.device)
+                else:
+                    x = x.to(self.device)
+                y = y.to(self.device)
+                if self.train_slow:
+                    time.sleep(0.1 * np.abs(np.random.rand()))
+                rep = self.model.base(x)
+                output = self.model.head_p(rep)
+                loss = self.loss(output, y)
+                if self.using_normal:
+                    rep = F.normalize(rep, p=2, dim=1)
+                if self.global_protos is not None:
+                    # 获取真实标签对应的全局原型
+                    proto_global = _get_prototypes_by_labels(rep, y, self.global_protos)
+
+                    if self.using_MSEloss:
+                        loss += self.loss_mse(proto_global, rep) * self.lamda
+
+                    if self.using_triple_loss:
+                        # 获取预测标签对应的原型
+                        preds = torch.argmax(output, dim=1)
+                        proto_preds = _get_prototypes_by_labels(rep, preds, self.global_protos)
+
+                        if self.triple_dis_loss:    # 距离比值损失
+                            dist_to_global = torch.norm(rep - proto_global, p=2, dim=1)
+                            dist_to_error = torch.norm(rep - proto_preds, p=2, dim=1)
+                            log_ratio = torch.log(dist_to_global + 1e-8) - torch.log(dist_to_error + 1e-8)
+                            loss += torch.mean(log_ratio) * self.lamda
+                        if self.triple_cosine_loss:  # 余弦相似度损失
+                            sim_to_global = F.cosine_similarity(rep, proto_global, dim=1)
+                            sim_to_error = F.cosine_similarity(rep, proto_preds, dim=1)
+
+                            global_loss = F.mse_loss(sim_to_global, torch.ones_like(sim_to_global))
+                            error_loss = F.mse_loss(sim_to_error, -torch.ones_like(sim_to_error))
+
+                            loss += (global_loss + error_loss) * self.lamda
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
+    def get_protos(self, trainloader, protos):
+        with torch.no_grad():
+            for x, y in trainloader:
+                if type(x) == type([]):
+                    x[0] = x[0].to(self.device)
+                else:
+                    x = x.to(self.device)
+                y = y.to(self.device)
+                rep = self.model.base(x)
+                output = self.model.head_p(rep)
+                if self.using_normal:
+                    rep = F.normalize(rep, p=2, dim=1)
+
+                pred_probs = torch.softmax(output, dim=1)  # 所有类别的预测概率
+                pred_classes = torch.argmax(pred_probs, dim=1)  # 预测的类别
+                true_class_probs = pred_probs[torch.arange(len(y)), y]  # 真实类别的概率
+                pred_class_probs = torch.max(pred_probs, dim=1)[0]  # 预测类别的概率
+
+                for i, yy in enumerate(y):
+                    y_c = yy.item()
+                    pred_c = pred_classes[i].item()
+                    protos[y_c].append({
+                        'true_class': y_c,  # 真实类别
+                        'pred_class': pred_c,  # 预测类别
+                        'true_class_prob': true_class_probs[i].item(),  # 真实类别的概率
+                        'pred_class_prob': pred_class_probs[i].item(),  # 预测类别的概率
+                        'is_correct': (y_c == pred_c),  # 预测是否正确
+                        'is_hard': (true_class_probs[i].item() < self.hard_thread),  # 是否困难样本
+                        'confidence': pred_class_probs[i].item(),  # 置信度（预测类别的概率）
+                        'feature': rep[i, :].detach().data,
+                        'all_probs': pred_probs[i, :].detach().data  # 所有类别的概率
+                    })
+        return protos
+    def train_cycle(self):
+        trainloader = self.load_train_data()
+        start_time = time.time()
+        self.model.train()
+        max_local_epochs = self.local_epochs
+        if self.train_slow:
+            max_local_epochs = np.random.randint(1, max_local_epochs // 2)
+        protos = defaultdict(list)
+        for epoch in range(max_local_epochs):
+            self.finetune_head_p(trainloader)
+            self.finetune_base(trainloader)
+            if True:#epoch == max_local_epochs-1:
+                protos = self.get_protos(trainloader, protos)
+        self.protos, self.vars, self.samples_T_num = cluster_protos_by_Truepredict(protos, self.using_true_samples_only)
+        self.err_protos = cluster_error_protos_by_prediction(protos)
+
+        if self.learning_rate_decay:
+            self.learning_rate_scheduler.step()
+        self.train_time_cost['num_rounds'] += 1
+        self.train_time_cost['total_cost'] += time.time() - start_time
+
     def train(self, global_epoch):
         trainloader = self.load_train_data()
 
@@ -103,6 +205,8 @@ class clientSimP(Client):
                 output_p = self.model.head_p(rep)
                 loss = self.loss(output_p, y)
                 output = output_p
+                if self.using_normal:
+                    rep = F.normalize(rep, p=2, dim=1)
                 # if global_epoch>0:
                 #     output_g = self.model.head_g(rep)
                 #     # output = output_p + output_g
@@ -138,11 +242,11 @@ class clientSimP(Client):
 
                 if True:#epoch == max_local_epochs-1:
                     # 计算预测概率和预测类别
-                    with torch.no_grad():
-                        pred_probs = torch.softmax(output, dim=1)  # 所有类别的预测概率
-                        pred_classes = torch.argmax(pred_probs, dim=1)  # 预测的类别
-                        true_class_probs = pred_probs[torch.arange(len(y)), y]  # 真实类别的概率
-                        pred_class_probs = torch.max(pred_probs, dim=1)[0]  # 预测类别的概率
+                    # with torch.no_grad():
+                    pred_probs = torch.softmax(output, dim=1)  # 所有类别的预测概率
+                    pred_classes = torch.argmax(pred_probs, dim=1)  # 预测的类别
+                    true_class_probs = pred_probs[torch.arange(len(y)), y]  # 真实类别的概率
+                    pred_class_probs = torch.max(pred_probs, dim=1)[0]  # 预测类别的概率
 
                     # 这里考虑一下是否仅用最后一代的特征
                     for i, yy in enumerate(y):
