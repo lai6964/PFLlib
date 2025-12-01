@@ -417,6 +417,17 @@ def run(args):
             args.model.fc = nn.Identity()
             args.model = BaseMineSplit(args.model, args.head_p, args.head_g)
             server = FedSimP(args, i)
+
+        elif args.algorithm == "FedCLIP2FL":
+            from server_clip2fl import FedCLIP2FL
+            args.head = copy.deepcopy(args.model.fc)
+            args.model.fc = nn.Identity()
+            args.model = BaseHeadSplit(args.model, args.head)
+            if "Cifar100" in args.dataset:
+                labelname = torchvision.datasets.CIFAR100("../dataset/Cifar100", train=True, download=True).classes
+            else:
+                labelname = torchvision.datasets.CIFAR10("../dataset/Cifar10", train=True, download=True).classes
+            server = FedCLIP2FL(args, i, labelname)
         else:
             raise NotImplementedError("{}".format(args.algorithm))
 
@@ -468,7 +479,7 @@ if __name__ == "__main__":
                         help="For auto_break")
     parser.add_argument('-ls', "--local_epochs", type=int, default=5,
                         help="Multiple update steps in one local epoch.")
-    parser.add_argument('-algo', "--algorithm", type=str, default="FedSimP")
+    parser.add_argument('-algo', "--algorithm", type=str, default="FedCLIP2FL")
     parser.add_argument('-jr', "--join_ratio", type=float, default=1.0,
                         help="Ratio of clients per round")
     parser.add_argument('-rjr', "--random_join_ratio", type=bool, default=False,
