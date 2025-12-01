@@ -22,6 +22,10 @@ class clientSimP(Client):
         self.global_protos = None
         self.loss_mse = torch.nn.MSELoss()
         self.lamda = args.lamda
+        self.using_MSEloss = args.using_MSEloss
+        self.using_triple_loss = args.using_triple_loss
+        self.triple_dis_loss = args.triple_dis_loss
+        self.triple_cosine_loss = args.triple_cosine_loss
 
     def finetune_head_p(self, trainloader):
         for param in self.model.parameters():
@@ -107,12 +111,30 @@ class clientSimP(Client):
 
 
                 if self.global_protos is not None:
-                    proto_new = copy.deepcopy(rep.detach())
-                    for i, yy in enumerate(y):
-                        y_c = yy.item()
-                        if y_c in self.global_protos.keys():
-                            proto_new[i, :] = self.global_protos[y_c].data
-                    loss += self.loss_mse(proto_new, rep) * self.lamda
+                    # 获取真实标签对应的全局原型
+                    proto_global = _get_prototypes_by_labels(rep, y, self.global_protos)
+
+                    if self.using_MSEloss:
+                        loss += self.loss_mse(proto_global, rep) * self.lamda
+
+                    if self.using_triple_loss:
+                        # 获取预测标签对应的原型
+                        preds = torch.argmax(output, dim=1)
+                        proto_preds = _get_prototypes_by_labels(rep, preds, self.global_protos)
+
+                        if self.triple_dis_loss:    # 距离比值损失
+                            dist_to_global = torch.norm(rep - proto_global, p=2, dim=1)
+                            dist_to_error = torch.norm(rep - proto_preds, p=2, dim=1)
+                            log_ratio = torch.log(dist_to_global + 1e-8) - torch.log(dist_to_error + 1e-8)
+                            loss += torch.mean(log_ratio) * self.lamda
+                        if self.triple_cosine_loss:  # 余弦相似度损失
+                            sim_to_global = F.cosine_similarity(rep, proto_global, dim=1)
+                            sim_to_error = F.cosine_similarity(rep, proto_preds, dim=1)
+
+                            global_loss = F.mse_loss(sim_to_global, torch.ones_like(sim_to_global))
+                            error_loss = F.mse_loss(sim_to_error, -torch.ones_like(sim_to_error))
+
+                            loss += (global_loss + error_loss) * self.lamda
 
                 if True:#epoch == max_local_epochs-1:
                     # 计算预测概率和预测类别
@@ -237,11 +259,15 @@ class clientSimP(Client):
                 train_acc += (torch.sum(torch.argmax(output, dim=1) == y)).item()
                 train_num += y.shape[0]
                 losses += loss.item() * y.shape[0]
-        print("train_acc:{:.4f}\ttrain_acc_p:{:.4f}\ttrain_acc_g:{:.4f}".format(train_acc/train_num, train_acc_p/train_num, train_acc_g/train_num))
+        # print("train_acc:{:.4f}\ttrain_acc_p:{:.4f}\ttrain_acc_g:{:.4f}".format(train_acc/train_num, train_acc_p/train_num, train_acc_g/train_num))
         # self.model.cpu()
         # self.save_model(self.model, 'model')
-
         return losses, train_num
+
+    def _off_diagonal(self, x):
+        n, m = x.shape
+        assert n == m
+        return x.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
 
 def cluster_protos_by_Truepredict(protos_list, using_true_samples_only=True):
     """按照真实类别中的正确预测聚类"""
@@ -510,3 +536,12 @@ def complete_error_cluster_analysis(protos_list):
         f"  平均每聚类样本数: {quality_metrics['avg_samples_per_cluster']:.2f} ± {quality_metrics['cluster_size_std']:.2f}")
     print(f"  高方差聚类: {len(quality_metrics['high_variance_clusters'])}")
     print(f"  低方差聚类: {len(quality_metrics['low_variance_clusters'])}")
+
+def _get_prototypes_by_labels(rep, labels, protos_dict):
+    """根据标签获取对应的原型"""
+    proto_result = rep.clone().detach()
+    for i, label in enumerate(labels):
+        label_val = label.item()
+        if label_val in protos_dict:
+            proto_result[i, :] = protos_dict[label_val].data
+    return proto_result

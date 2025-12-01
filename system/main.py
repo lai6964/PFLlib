@@ -554,14 +554,19 @@ if __name__ == "__main__":
     # FedDBE
     parser.add_argument('-mo', "--momentum", type=float, default=0.1)
     parser.add_argument('-klw', "--kl_weight", type=float, default=0.0)
-    parser.add_argument("--using_reconstructloss", type=str2bool, default=False)
-    parser.add_argument("--using_tripletloss", type=str2bool, default=True)
-    parser.add_argument("--using_specialloss", type=str2bool, default=True)
-    parser.add_argument("--using_glocla", type=str2bool, default=True)
-    parser.add_argument("--using_normal", type=str2bool, default=False)
+    # parser.add_argument("--using_reconstructloss", type=str2bool, default=False)
+    # parser.add_argument("--using_tripletloss", type=str2bool, default=True)
+    # parser.add_argument("--using_specialloss", type=str2bool, default=True)
+    # parser.add_argument("--using_glocla", type=str2bool, default=True)
+    # parser.add_argument("--using_normal", type=str2bool, default=False)
     parser.add_argument("--using_aggregate", type=str2bool, default=False)
     parser.add_argument("--ploting_figure", type=str2bool, default=False)
     parser.add_argument("--save_features", type=str2bool, default=False)
+    parser.add_argument("--using_MSEloss", type=str2bool, default=False)
+    parser.add_argument("--using_triple_loss", type=str2bool, default=True)
+    parser.add_argument("--triple_dis_loss", type=str2bool, default=False)
+    parser.add_argument("--triple_cosine_loss", type=str2bool, default=False)
+
     # python main.py -data Cifar100 -algo FedDFCC -did 1 --using_reconstructloss False --using_tripletloss False --using_specialloss False --using_glocla False --using_aggregate False | tee FedDCC_cifar100_FFFFF.log
 
 
@@ -587,7 +592,8 @@ if __name__ == "__main__":
     #     on_trace_ready=torch.profiler.tensorboard_trace_handler('./log')
     #     ) as prof:
     # with torch.autograd.profiler.profile(profile_memory=True) as prof:
-    print(args.algorithm, args.using_reconstructloss, args.using_tripletloss, args.using_specialloss)
+    # print(args.algorithm, args.using_reconstructloss, args.using_tripletloss, args.using_specialloss)
+    print(args.algorithm, args.using_MSEloss, args.using_triple_loss, args.triple_dis_loss, args.triple_cosine_loss)
     run(args)
     
     # print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=20))
