@@ -11,6 +11,13 @@ def read_data(dataset, idx, is_train=True):
         data_dir = os.path.join('../dataset', dataset, 'test/')
 
     file = data_dir + str(idx) + '.npz'
+
+    if "long" in dataset and not is_train:
+        file = data_dir[:-1] + '.npz'
+        with open(file, 'rb') as f:
+            data = np.load(f, allow_pickle=True)['data'].tolist()
+        return data[0]
+
     with open(file, 'rb') as f:
         data = np.load(f, allow_pickle=True)['data'].tolist()
     return data

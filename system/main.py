@@ -418,6 +418,19 @@ def run(args):
             args.model = BaseMineSplit(args.model, args.head_p, args.head_g)
             server = FedSimP(args, i)
 
+        elif args.algorithm == "FedSimP_long":
+            from serversimp import FedSimP
+            # from new_SS import FedCC
+            # args.model = resnet8(num_classes=args.num_classes).to(args.device)
+            from flcore.trainmodel.Resnet8_256 import ResNet_cifar
+            args.model = ResNet_cifar(resnet_size=8, scaling=4,
+                                        save_activations=False, group_norm_num_groups=None,
+                                        freeze_bn=False, freeze_bn_affine=False, num_classes=args.num_classes).to(args.device)
+            args.head_p = copy.deepcopy(args.model.classifier)
+            args.head_g = copy.deepcopy(args.model.classifier)
+            args.model.classifier = nn.Identity()
+            args.model = BaseMineSplit(args.model, args.head_p, args.head_g)
+            server = FedSimP(args, i)
         elif args.algorithm == "FedCLIP2FL":
             from server_clip2fl import FedCLIP2FL
             args.head = copy.deepcopy(args.model.fc)
@@ -466,7 +479,7 @@ if __name__ == "__main__":
     parser.add_argument('-dev', "--device", type=str, default="cuda",
                         choices=["cpu", "cuda"])
     parser.add_argument('-did', "--device_id", type=str, default="0")
-    parser.add_argument('-data', "--dataset", type=str, default="Cifar10_2")
+    parser.add_argument('-data', "--dataset", type=str, default="Cifar10_longtailed_10")
     parser.add_argument('-ncl', "--num_classes", type=int, default=10)
     parser.add_argument('-m', "--model", type=str, default="CNN")
     parser.add_argument('-lbs', "--batch_size", type=int, default=64)
@@ -479,7 +492,7 @@ if __name__ == "__main__":
                         help="For auto_break")
     parser.add_argument('-ls', "--local_epochs", type=int, default=5,
                         help="Multiple update steps in one local epoch.")
-    parser.add_argument('-algo', "--algorithm", type=str, default="FedCLIP2FL")
+    parser.add_argument('-algo', "--algorithm", type=str, default="FedSimP")
     parser.add_argument('-jr', "--join_ratio", type=float, default=1.0,
                         help="Ratio of clients per round")
     parser.add_argument('-rjr', "--random_join_ratio", type=bool, default=False,
@@ -569,7 +582,7 @@ if __name__ == "__main__":
     # parser.add_argument("--using_tripletloss", type=str2bool, default=True)
     # parser.add_argument("--using_specialloss", type=str2bool, default=True)
     # parser.add_argument("--using_glocla", type=str2bool, default=True)
-    parser.add_argument("--using_normal", type=str2bool, default=True)
+    parser.add_argument("--using_normal", type=str2bool, default=False)
     parser.add_argument("--using_aggregate", type=str2bool, default=False)
     parser.add_argument("--ploting_figure", type=str2bool, default=False)
     parser.add_argument("--save_features", type=str2bool, default=False)

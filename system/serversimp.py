@@ -12,6 +12,7 @@ from flcore.servers.serverbase import Server
 from collections import defaultdict
 import sys
 import json
+from utils.data_utils import read_client_data
 
 
 class FedSimP(Server):
@@ -40,12 +41,13 @@ class FedSimP(Server):
             sys.stdout.flush()  # 强制刷新标准输出缓冲区
             s_t = time.time()
             self.selected_clients = self.select_clients()
-            # self.send_models()
+            self.send_models()
 
             if i % self.eval_gap == 0:
                 print(f"\n-------------Round number: {i}-------------")
                 print("\nEvaluate personalized models")
-                self.evaluate()
+                # self.evaluate()
+                self.evaluate_global()
 
             for client in self.selected_clients:
                 client.train(i)
@@ -74,8 +76,8 @@ class FedSimP(Server):
             # self.print_(max(self.rs_test_acc), max(
             #     self.rs_train_acc), min(self.rs_train_loss))
             print(max(self.rs_test_acc))
-            print(max(self.rs_test_acc2))
-            print(max(self.rs_test_acc3))
+            # print(max(self.rs_test_acc2))
+            # print(max(self.rs_test_acc3))
         print("\nAverage time cost per round.")
         print(sum(self.Budget[1:]) / len(self.Budget[1:]))
 
@@ -162,6 +164,31 @@ class FedSimP(Server):
 
         return ids, num_samples, tot_correct, tot_auc, tot_correct2, tot_correct3
 
+    def evaluate_global(self):
+        test_data = read_client_data(self.dataset, 0, is_train=False, few_shot=self.few_shot)
+        testloader = torch.utils.data.DataLoader(test_data, self.batch_size, drop_last=False, shuffle=True)
+
+        self.global_model.eval()
+        self.global_model.to(self.device)
+        test_acc_g, test_acc_p, test_num = 0, 0, 0
+        with torch.no_grad():
+            for x, y in testloader:
+                x = x.to(self.device)
+                y = y.to(self.device)
+
+                rep = self.global_model.base(x)
+                out_g = self.global_model.head_g(rep)
+                out_p = self.global_model.head_p(rep)
+                test_acc_g += (torch.sum(torch.argmax(out_g, dim=1) == y)).item()
+                test_acc_p += (torch.sum(torch.argmax(out_p, dim=1) == y)).item()
+                test_num += y.shape[0]
+        test_acc_g /= test_num
+        test_acc_p /= test_num
+        self.rs_test_acc.append(test_acc_g)
+        self.rs_test_acc2.append(test_acc_p)
+        print("Averaged Test Accuracy_g: {:.4f} and  p: {:.4f} ".format(test_acc_g, test_acc_p))
+
+
     def evaluate(self, acc=None, loss=None):
         stats = self.test_metrics()
         stats_train = self.train_metrics()
@@ -210,7 +237,7 @@ class FedSimP(Server):
 
             for class_id in range(self.num_classes):
                 if class_id in samples and samples[class_id] is not None and samples[class_id] > 0:
-                    num_samples = samples[class_id]
+                    num_samples = 300#samples[class_id]
 
                     # 从本地分布采样特征
                     local_mean = protos[class_id]
