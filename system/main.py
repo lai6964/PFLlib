@@ -131,6 +131,8 @@ def run(args):
             
             # args.model = resnet18(num_classes=args.num_classes, has_bn=True, bn_block_num=4).to(args.device)
         
+        elif model_str == "ResNet8":
+            args.model = resnet8(num_classes=args.num_classes).to(args.device)
         elif model_str == "ResNet10":
             args.model = resnet10(num_classes=args.num_classes).to(args.device)
         
@@ -430,6 +432,8 @@ def run(args):
             args.head_g = copy.deepcopy(args.model.classifier)
             args.model.classifier = nn.Identity()
             args.model = BaseMineSplit(args.model, args.head_p, args.head_g)
+            args.dataset = os.path.join(r"E:\myproject\CLIP2FL-main","cifar10_longtailed_10")
+            args.num_clients = 10
             server = FedSimP(args, i)
         elif args.algorithm == "FedCLIP2FL":
             from server_clip2fl import FedCLIP2FL
@@ -479,11 +483,11 @@ if __name__ == "__main__":
     parser.add_argument('-dev', "--device", type=str, default="cuda",
                         choices=["cpu", "cuda"])
     parser.add_argument('-did', "--device_id", type=str, default="0")
-    parser.add_argument('-data', "--dataset", type=str, default="Cifar10_longtailed_10")
+    parser.add_argument('-data', "--dataset", type=str, default="Cifar10_long")
     parser.add_argument('-ncl', "--num_classes", type=int, default=10)
-    parser.add_argument('-m', "--model", type=str, default="CNN")
+    parser.add_argument('-m', "--model", type=str, default="ResNet8")
     parser.add_argument('-lbs', "--batch_size", type=int, default=64)
-    parser.add_argument('-lr', "--local_learning_rate", type=float, default=0.005,
+    parser.add_argument('-lr', "--local_learning_rate", type=float, default=0.1,
                         help="Local learning rate")
     parser.add_argument('-ld', "--learning_rate_decay", type=bool, default=False)
     parser.add_argument('-ldg', "--learning_rate_decay_gamma", type=float, default=0.99)
@@ -492,12 +496,12 @@ if __name__ == "__main__":
                         help="For auto_break")
     parser.add_argument('-ls', "--local_epochs", type=int, default=5,
                         help="Multiple update steps in one local epoch.")
-    parser.add_argument('-algo', "--algorithm", type=str, default="FedSimP")
+    parser.add_argument('-algo', "--algorithm", type=str, default="FedAvg")
     parser.add_argument('-jr', "--join_ratio", type=float, default=1.0,
                         help="Ratio of clients per round")
     parser.add_argument('-rjr', "--random_join_ratio", type=bool, default=False,
                         help="Random ratio of clients per round")
-    parser.add_argument('-nc', "--num_clients", type=int, default=20,
+    parser.add_argument('-nc', "--num_clients", type=int, default=10,
                         help="Total number of clients")
     parser.add_argument('-pv', "--prev", type=int, default=0,
                         help="Previous Running times")

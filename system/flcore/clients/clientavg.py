@@ -3,7 +3,7 @@ import torch
 import numpy as np
 import time
 from flcore.clients.clientbase import Client
-
+from param_aug import DiffAugment
 
 class clientAVG(Client):
     def __init__(self, args, id, train_samples, test_samples, **kwargs):
@@ -22,6 +22,7 @@ class clientAVG(Client):
 
         for epoch in range(max_local_epochs):
             for i, (x, y) in enumerate(trainloader):
+                x = DiffAugment(x, strategy='color_crop_flip', seed=42)
                 if type(x) == type([]):
                     x[0] = x[0].to(self.device)
                 else:

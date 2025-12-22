@@ -8,6 +8,9 @@ from sklearn.preprocessing import label_binarize
 from sklearn import metrics
 import torch.nn.functional as F
 
+from system.utils.data_utils import get_longtailed_data
+
+
 class clientSimP(Client):
     def __init__(self, args, id, train_samples, test_samples, **kwargs):
         super().__init__(args, id, train_samples, test_samples, **kwargs)
@@ -168,6 +171,13 @@ class clientSimP(Client):
             self.learning_rate_scheduler.step()
         self.train_time_cost['num_rounds'] += 1
         self.train_time_cost['total_cost'] += time.time() - start_time
+
+    def load_train_data(self, batch_size=None):
+        if batch_size == None:
+            batch_size = self.batch_size
+        # train_data = read_client_data(self.dataset, self.id, is_train=True, few_shot=self.few_shot)
+        train_data = get_longtailed_data(self.dataset, self.id, is_train=True)
+        return torch.utils.data.DataLoader(train_data, batch_size, drop_last=False, shuffle=True)
 
     def train(self, global_epoch):
         trainloader = self.load_train_data()

@@ -12,7 +12,7 @@ from flcore.servers.serverbase import Server
 from collections import defaultdict
 import sys
 import json
-from utils.data_utils import read_client_data
+from utils.data_utils import read_client_data, get_longtailed_data
 
 
 class FedSimP(Server):
@@ -35,6 +35,18 @@ class FedSimP(Server):
         self.rs_test_acc3=[]
         self.ploting_figure = args.ploting_figure
         self.save_features = args.save_features
+
+    def set_clients(self, clientObj):
+        for i, train_slow, send_slow in zip(range(self.num_clients), self.train_slow_clients, self.send_slow_clients):
+            train_data = get_longtailed_data(self.dataset, i, is_train=True)
+            test_data = get_longtailed_data(self.dataset, i, is_train=False)
+            client = clientObj(self.args,
+                            id=i,
+                            train_samples=len(train_data),
+                            test_samples=len(test_data),
+                            train_slow=train_slow,
+                            send_slow=send_slow)
+            self.clients.append(client)
 
     def train(self):
         for i in range(self.global_rounds + 1):
@@ -164,8 +176,11 @@ class FedSimP(Server):
 
         return ids, num_samples, tot_correct, tot_auc, tot_correct2, tot_correct3
 
+
     def evaluate_global(self):
-        test_data = read_client_data(self.dataset, 0, is_train=False, few_shot=self.few_shot)
+        # test_data = read_client_data(self.dataset, 0, is_train=False, few_shot=self.few_shot)
+        # testloader = torch.utils.data.DataLoader(test_data, self.batch_size, drop_last=False, shuffle=True)
+        test_data = get_longtailed_data(self.dataset, 0, is_train=False)
         testloader = torch.utils.data.DataLoader(test_data, self.batch_size, drop_last=False, shuffle=True)
 
         self.global_model.eval()
@@ -516,3 +531,5 @@ def show_tsne_fig(epoch, dataloader):
                 bbox_inches='tight',  # 关键：让 savefig 计算紧凑边界
                 pad_inches=0.1)  # 可选：不留额外边距（默认 0.1）
     # plt.show()
+
+

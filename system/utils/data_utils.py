@@ -3,6 +3,19 @@ import os
 import torch
 from collections import defaultdict
 
+def get_longtailed_data(dataset, id=0, is_train=True):
+    if is_train:
+        file = os.path.join(dataset , str(id) + '.npz')
+    else:
+        file = os.path.join(dataset , 'test.npz')
+    with open(file, 'rb') as f:
+        data = np.load(f, allow_pickle=True)['data'].tolist()
+
+    X = torch.Tensor(data['x']).type(torch.float32)
+    Y = torch.Tensor(data['y']).type(torch.int64)
+    F = torch.Tensor(data['f']).type(torch.float32)
+    train_data = [(x, y) for x, y in zip(X, Y)]
+    return train_data
 
 def read_data(dataset, idx, is_train=True):
     if is_train:
@@ -16,7 +29,7 @@ def read_data(dataset, idx, is_train=True):
         file = data_dir[:-1] + '.npz'
         with open(file, 'rb') as f:
             data = np.load(f, allow_pickle=True)['data'].tolist()
-        return data[0]
+        return data
 
     with open(file, 'rb') as f:
         data = np.load(f, allow_pickle=True)['data'].tolist()
